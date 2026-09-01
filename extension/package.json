@@ -3,7 +3,7 @@
   "displayName": "ICM Production Harness",
   "description": "Operate the ICM filesystem-first AI engineering harness from VS Code: rounds, stages, artifacts, worktree diffs, human gates.",
   "version": "0.1.0",
-  "publisher": "sps18209",
+  "publisher": "RobertPorter",
   "license": "MIT",
   "repository": {
     "type": "git",
