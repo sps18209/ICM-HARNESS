@@ -1,0 +1,23 @@
+[runtime]
+state_db = ".harness/runtime/state.sqlite3"
+audit_log = ".harness/runtime/audit.jsonl"
+lease_ttl_seconds = 90
+heartbeat_seconds = 20
+stage_timeout_seconds = 1800
+global_concurrency = 8
+
+[context]
+base_budget_tokens = 1800
+max_budget_tokens = 24000
+max_tier = 4
+
+[routing]
+quality_weight = 1.0
+reliability_weight = 0.8
+cost_weight = 0.25
+latency_weight = 0.15
+risk_weight = 0.7
+exploration_weight = 0.08
+
+[workspace]
+worktree_root = ".harness/worktrees"

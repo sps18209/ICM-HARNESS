@@ -1,0 +1,55 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install -e ".[dev]"
+      - run: python scripts/validate_layout.py
+      - run: python scripts/validate_architecture.py
+      - run: ruff check src tests scripts
+      # Full suite, including the integration suites (integrations adapters,
+      # the fake-codex agent path). The live-codex worktree smoke auto-skips
+      # unless ICM_SMOKE_CODEX=1 and `codex` is installed.
+      - run: python -m pytest
+      - run: python -m compileall -q src tests
+
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The extension integration test spawns a real `icm serve`, so the
+      # harness must be importable by the interpreter it launches.
+      - run: python -m pip install -e ".[dev]"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - name: Install extension dependencies
+        working-directory: extension
+        run: npm ci
+      - name: Type-check and run extension tests (logic, API mock, live server)
+        working-directory: extension
+        env:
+          ICM_TEST_PYTHON: python
+        run: npm test
+      - name: Package the extension (.vsix)
+        working-directory: extension
+        run: npm run package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: icm-harness-vsix
+          path: extension/icm-harness.vsix
+          if-no-files-found: error

@@ -1,0 +1,240 @@
+{
+  "name": "icm-harness",
+  "displayName": "ICM Production Harness",
+  "description": "Operate the ICM filesystem-first AI engineering harness from VS Code: rounds, stages, artifacts, worktree diffs, human gates.",
+  "version": "0.1.0",
+  "publisher": "sps18209",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sps18209/ICM-HARNESS.git",
+    "directory": "extension"
+  },
+  "bugs": {
+    "url": "https://github.com/sps18209/ICM-HARNESS/issues"
+  },
+  "homepage": "https://github.com/sps18209/ICM-HARNESS#readme",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "ICM Harness",
+      "properties": {
+        "icm.host": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "Host the ICM operator server binds to."
+        },
+        "icm.port": {
+          "type": "number",
+          "default": 8765,
+          "description": "Port of the ICM operator server."
+        },
+        "icm.token": {
+          "type": "string",
+          "default": "",
+          "description": "Bearer token (ICM_WEB_TOKEN). Required only when the server binds outside loopback. If the extension starts the server, this token is injected into its environment."
+        },
+        "icm.python": {
+          "type": "string",
+          "default": "python3",
+          "description": "Python interpreter used to launch `-m icm_harness serve` when auto-starting the server."
+        },
+        "icm.autoStartServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start `icm serve` automatically on activation if it is not already reachable."
+        },
+        "icm.dryRun": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run rounds with the deterministic dry-run agent instead of a real coding agent."
+        },
+        "icm.refreshIntervalMs": {
+          "type": "number",
+          "default": 1500,
+          "description": "How often (ms) the tree, status bar, and gate watcher poll the server."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "icm",
+          "title": "ICM Harness",
+          "icon": "media/icm.svg"
+        }
+      ]
+    },
+    "views": {
+      "icm": [
+        {
+          "id": "icm.rounds",
+          "name": "Rounds",
+          "icon": "media/icm.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "icm.rounds",
+        "contents": "No rounds yet.\n[New round](command:icm.newRound)\n[Start server](command:icm.startServer)\n[Open operator console](command:icm.openConsole)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "icm.newRound",
+        "title": "ICM: New Round",
+        "icon": "$(add)"
+      },
+      {
+        "command": "icm.refresh",
+        "title": "ICM: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "icm.runRound",
+        "title": "ICM: Run / Resume Round",
+        "icon": "$(play)"
+      },
+      {
+        "command": "icm.approveRound",
+        "title": "ICM: Approve Human Gate",
+        "icon": "$(check)"
+      },
+      {
+        "command": "icm.cancelRound",
+        "title": "ICM: Cancel Round",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "icm.retryRound",
+        "title": "ICM: Retry Round",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "icm.promoteRound",
+        "title": "ICM: Promote Round",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "icm.showDiff",
+        "title": "ICM: Show Worktree Diff",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "icm.openArtifact",
+        "title": "ICM: Open Artifact"
+      },
+      {
+        "command": "icm.showEvents",
+        "title": "ICM: Show Event Trail",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "icm.openConsole",
+        "title": "ICM: Open Operator Console",
+        "icon": "$(browser)"
+      },
+      {
+        "command": "icm.startServer",
+        "title": "ICM: Start Server"
+      },
+      {
+        "command": "icm.stopServer",
+        "title": "ICM: Stop Server"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "icm.newRound",
+          "when": "view == icm.rounds",
+          "group": "navigation@1"
+        },
+        {
+          "command": "icm.openConsole",
+          "when": "view == icm.rounds",
+          "group": "navigation@2"
+        },
+        {
+          "command": "icm.refresh",
+          "when": "view == icm.rounds",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "icm.runRound",
+          "when": "view == icm.rounds && viewItem =~ /^round/",
+          "group": "inline@1"
+        },
+        {
+          "command": "icm.approveRound",
+          "when": "view == icm.rounds && viewItem == round-waiting_approval",
+          "group": "inline@2"
+        },
+        {
+          "command": "icm.showDiff",
+          "when": "view == icm.rounds && viewItem =~ /^round/",
+          "group": "inline@3"
+        },
+        {
+          "command": "icm.runRound",
+          "when": "view == icm.rounds && viewItem =~ /^round/",
+          "group": "1_run@1"
+        },
+        {
+          "command": "icm.approveRound",
+          "when": "view == icm.rounds && viewItem == round-waiting_approval",
+          "group": "1_run@2"
+        },
+        {
+          "command": "icm.cancelRound",
+          "when": "view == icm.rounds && viewItem =~ /^round/",
+          "group": "1_run@3"
+        },
+        {
+          "command": "icm.retryRound",
+          "when": "view == icm.rounds && viewItem =~ /^round/",
+          "group": "1_run@4"
+        },
+        {
+          "command": "icm.promoteRound",
+          "when": "view == icm.rounds && viewItem == round-closed",
+          "group": "2_workspace@1"
+        },
+        {
+          "command": "icm.showDiff",
+          "when": "view == icm.rounds && viewItem =~ /^round/",
+          "group": "2_workspace@2"
+        },
+        {
+          "command": "icm.showEvents",
+          "when": "view == icm.rounds && viewItem =~ /^round/",
+          "group": "2_workspace@3"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node --test test/*.test.js",
+    "package": "vsce package --no-dependencies -o icm-harness.vsix",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.4.0"
+  }
+}

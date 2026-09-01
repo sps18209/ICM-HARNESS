@@ -1,0 +1,31 @@
+[quick]
+tokens = 2500
+max_tier = 1
+
+[discovery.frame]
+tokens = 3500
+max_tier = 1
+
+[discovery.research]
+tokens = 14000
+max_tier = 4
+
+[discovery.adversarial]
+tokens = 9000
+max_tier = 3
+
+[build.planner]
+tokens = 9000
+max_tier = 3
+
+[build.writer]
+tokens = 7000
+max_tier = 2
+
+[build.tester]
+tokens = 8500
+max_tier = 3
+
+[decision]
+tokens = 12000
+max_tier = 4
