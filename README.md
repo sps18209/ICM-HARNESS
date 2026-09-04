@@ -55,6 +55,26 @@ Run `icm doctor` any time to check prerequisites (Python, git, agent binary, `fz
 Prefer a GUI? See [`extension/`](extension/README.md) for the VS Code extension, which drives the same
 server.
 
+## Use ICM from an agent
+
+The repository includes a stdio MCP server exposing round operations to VS Code
+agents. Install the project into the Python environment used by VS Code:
+
+```bash
+pip install -e .
+icm init .
+```
+
+Open this repository as a VS Code workspace. The checked-in
+[`.vscode/mcp.json`](.vscode/mcp.json) registers `icm-harness` automatically.
+The server runs in the workspace directory and exposes tools for creating,
+running, inspecting, approving, retrying, cancelling, and promoting rounds,
+as well as reading events, artifacts, and diffs.
+
+The MCP server uses the same `HarnessApplication` as the CLI and extension. It
+does not replace `icm serve`; both can operate on the same initialized
+workspace.
+
 ## Core modes
 
 - `discovery`: frame -> explore -> research -> adversarial -> synthesis -> validate

@@ -23,6 +23,7 @@ dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]
 icm = "icm_harness.cli.app:main"
+icm-mcp = "icm_harness.mcp.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

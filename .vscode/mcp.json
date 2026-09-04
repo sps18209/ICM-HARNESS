@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "icm-harness": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["-m", "icm_harness.mcp.server"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
