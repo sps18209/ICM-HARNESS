@@ -55,6 +55,31 @@ Run `icm doctor` any time to check prerequisites (Python, git, agent binary, `fz
 Prefer a GUI? See [`extension/`](extension/README.md) for the VS Code extension, which drives the same
 server.
 
+## Ephemeral single-session use (no global install)
+
+Hand an agent like Claude Code the repository — cloned or as a downloaded, unzipped
+zip — and stand the harness up for **that session only**, with zero global footprint
+(no `pipx`, no shell-rc edits, no `~/.claude` changes):
+
+```bash
+eval "$(bash scripts/session-init.sh)"   # ephemeral venv + workspace; activates `icm`
+icm doctor                                # verify
+```
+
+`scripts/session-init.sh` builds a session-scoped virtualenv under a temp directory,
+installs a snapshot of the harness into it, and initializes an ICM workspace in the
+current project. Human-readable logs go to stderr; the only line on stdout is the
+`export PATH=…` activation, so the `eval` form above just works (run it without
+`eval` to read the logs and copy the printed line yourself). When you are done,
+everything is removed by deleting one directory — the script prints the exact
+`rm -rf` line.
+
+Useful flags (`--help` lists them all): `--project DIR` (workspace target),
+`--home DIR` (where the venv lives; reused if present), `--with-mcp` (also write a
+removable project-local `.mcp.json` for the `icm-harness` MCP server — restart the
+session to load it), `--no-init`, `--dev`, `--python BIN`. `make session-init` runs
+it with defaults.
+
 ## Use ICM from an agent
 
 The repository includes a stdio MCP server exposing round operations to VS Code
