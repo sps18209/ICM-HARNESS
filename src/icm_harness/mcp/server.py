@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import anyio
 import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
+
+import anyio
 
 from icm_harness.application import HarnessApplication
 from icm_harness.kernel.contracts import TaskIntent, TaskProfile

@@ -7,20 +7,23 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from icm_harness.agents.contracts import StageAgent, StageInvocation
-from icm_harness.agents.errors import StageCancelled
-from icm_harness.agents.factory import make_stage_agent
+from icm_harness.agents import StageAgent, StageCancelled, StageInvocation, make_stage_agent
 from icm_harness.application.artifacts import ArtifactStore
 from icm_harness.config import HarnessConfig, load_config
-from icm_harness.context.budgets import ContextBudget, estimate_tokens
-from icm_harness.context.engine import ContextEngine
-from icm_harness.context.retrieval import FilesystemWikiProvider
-from icm_harness.evaluation.gates import require_stage_outputs
-from icm_harness.execution.concurrency import KeyedLimiter
-from icm_harness.execution.local import LocalExecutor
-from icm_harness.execution.managed import ManagedStageExecutor
-from icm_harness.execution.run_store import SQLiteRunStore
-from icm_harness.execution.watchdog import LeaseHeartbeat
+from icm_harness.context import (
+    ContextBudget,
+    ContextEngine,
+    FilesystemWikiProvider,
+    estimate_tokens,
+)
+from icm_harness.evaluation import require_stage_outputs
+from icm_harness.execution import (
+    KeyedLimiter,
+    LeaseHeartbeat,
+    LocalExecutor,
+    ManagedStageExecutor,
+    SQLiteRunStore,
+)
 from icm_harness.kernel.contracts import (
     ContextItem,
     ModelCandidate,
@@ -32,15 +35,16 @@ from icm_harness.kernel.contracts import (
 )
 from icm_harness.kernel.lifecycle import RoundController
 from icm_harness.kernel.state import ArtifactRecord, EventRecord, RoundRecord, SQLiteStateStore
-from icm_harness.modes.catalog import get_stage
-from icm_harness.observability.audit import AuditEvent, JsonlAuditSink
-from icm_harness.policies.authorization import AuthorizationPolicy
-from icm_harness.policies.runtime_settings import SituationalSettingsPolicy
-from icm_harness.routing.correlation import HeuristicCorrelation
-from icm_harness.routing.learning import BayesianPerformanceStore
-from icm_harness.routing.mode_router import ModeRouter
-from icm_harness.routing.model_router import ModelRouter
-from icm_harness.workspace.git import GitWorktreeManager
+from icm_harness.modes import get_stage, stage_refs_for_route
+from icm_harness.observability import AuditEvent, JsonlAuditSink
+from icm_harness.policies import AuthorizationPolicy, SituationalSettingsPolicy
+from icm_harness.routing import (
+    BayesianPerformanceStore,
+    HeuristicCorrelation,
+    ModelRouter,
+    ModeRouter,
+)
+from icm_harness.workspace import GitWorktreeManager
 
 TERMINAL_ROUND_STATUSES = frozenset({"closed", "failed", "cancelled"})
 
@@ -60,7 +64,11 @@ class HarnessApplication:
         self.config = config or load_config(self.root)
         state_path = self.root / self.config.runtime.state_db
         self.state = SQLiteStateStore(state_path)
-        self.controller = RoundController(self.state)
+        self.controller = RoundController(
+            self.state,
+            get_stage=get_stage,
+            stage_refs_for_route=stage_refs_for_route,
+        )
         self.runs = SQLiteRunStore(state_path)
         self.executor = ManagedStageExecutor(
             LocalExecutor(self.state, KeyedLimiter(self.config.runtime.global_concurrency)),

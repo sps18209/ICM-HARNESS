@@ -259,7 +259,7 @@ def cmd_doctor(args) -> int:
 
 
 def cmd_serve(args) -> int:
-    from icm_harness.web.server import serve
+    from icm_harness.web import serve
 
     config = load_config(_root())
     host = args.host or config.web.host

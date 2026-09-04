@@ -6,8 +6,7 @@ from pathlib import Path
 from typing import Protocol
 
 from icm_harness.kernel.contracts import ContextBundle, StageResult, StageSpec, TaskProfile
-from icm_harness.policies.authorization import AuthorizationPolicy
-from icm_harness.policies.runtime_settings import AgentRunSettings
+from icm_harness.policies import AgentRunSettings, AuthorizationPolicy
 
 
 @dataclass(frozen=True, slots=True)
