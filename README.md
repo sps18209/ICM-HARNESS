@@ -100,6 +100,30 @@ The MCP server uses the same `HarnessApplication` as the CLI and extension. It
 does not replace `icm serve`; both can operate on the same initialized
 workspace.
 
+## Claude Code as the engine
+
+The harness separates two engines: the **orchestration engine** (the Python `icm`
+process — durable round state, git-worktree isolation, model routing, bounded
+retries) and the **stage agent** that does each stage's actual work. A capable
+coding agent such as Claude Code can be either.
+
+- **Form A — Claude Code as the stage agent.** Set `provider = "claude-code"` under
+  `[agent]` in `.harness/config.toml` (executable defaults to `claude`). The Python
+  engine still drives the lifecycle, but each stage's work is done by Claude Code in
+  headless mode instead of Codex. Mutating stages need Claude Code to have file-write
+  permission — set it with a `--permission-mode` flag via `extra_args`.
+- **Form B — the folder is the engine.** `icm init` writes `.icm/ENGINE.md`, a
+  self-contained driver that lets Claude Code run the whole ICM method against the
+  workspace with **no external process** — it defines the modes, the stage roles and
+  invariants, and where to read and write. The project's `CLAUDE.md` gets a small
+  pointer to it. Drop the workspace into any repo and the agent can self-drive.
+
+**`icm init` is non-destructive.** It never overwrites an existing project file
+(your `CLAUDE.md`, `AGENTS.md`, a customized `.harness/config.toml`, or a populated
+Context Wiki page). A pre-existing `CLAUDE.md` is preserved and only gets the engine
+pointer appended (idempotently). Pass `--force` to overwrite with the shipped
+templates.
+
 ## Core modes
 
 - `discovery`: frame -> explore -> research -> adversarial -> synthesis -> validate
