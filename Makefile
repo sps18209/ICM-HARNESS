@@ -1,3 +1,6 @@
+session-init:
+	bash scripts/session-init.sh
+
 test:
 	python -m pytest
 
