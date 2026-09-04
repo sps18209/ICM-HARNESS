@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from icm_harness.context.budgets import estimate_tokens
+from icm_harness.context import estimate_tokens
 from icm_harness.kernel.contracts import ContextItem
 
 SOURCE_SUFFIXES = frozenset(

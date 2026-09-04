@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from icm_harness.workspace.locking import file_lock
+from icm_harness.workspace import file_lock
 
 
 @dataclass(frozen=True, slots=True)

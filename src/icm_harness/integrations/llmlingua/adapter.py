@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from icm_harness.context.budgets import estimate_tokens
+from icm_harness.context import estimate_tokens
 from icm_harness.kernel.errors import IntegrationUnavailable
 
 

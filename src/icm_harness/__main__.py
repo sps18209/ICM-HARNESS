@@ -1,3 +1,3 @@
-from icm_harness.cli.app import main
+from icm_harness.cli import main
 
 raise SystemExit(main())

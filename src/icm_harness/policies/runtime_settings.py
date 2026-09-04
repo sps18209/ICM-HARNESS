@@ -1,6 +1,6 @@
 from dataclasses import dataclass, replace
 
-from icm_harness.context.triggers import ContextTrigger
+from icm_harness.context import ContextTrigger
 
 
 @dataclass(frozen=True, slots=True)

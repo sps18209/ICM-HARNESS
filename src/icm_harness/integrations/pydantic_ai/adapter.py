@@ -10,9 +10,12 @@ Raises :class:`IntegrationUnavailable` when pydantic-ai is not installed.
 
 from __future__ import annotations
 
-from icm_harness.agents.contracts import StageInvocation
-from icm_harness.agents.errors import StageAgentError, StageCancelled
-from icm_harness.agents.prompting import render_stage_prompt
+from icm_harness.agents import (
+    StageAgentError,
+    StageCancelled,
+    StageInvocation,
+    render_stage_prompt,
+)
 from icm_harness.kernel.contracts import StageResult, StageStatus
 from icm_harness.kernel.errors import IntegrationUnavailable
 

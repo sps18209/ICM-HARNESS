@@ -1,15 +1,32 @@
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 
-from icm_harness.kernel.contracts import ModeRoute, StageResult, StageStatus, TaskProfile
+from icm_harness.kernel.contracts import (
+    ModeRoute,
+    StageResult,
+    StageSpec,
+    StageStatus,
+    TaskProfile,
+)
 from icm_harness.kernel.errors import ContractViolation, InvalidTransition
 from icm_harness.kernel.state import RoundRecord, SQLiteStateStore
-from icm_harness.modes.catalog import get_stage, stage_refs_for_route
 
 
 @dataclass
 class RoundController:
+    """Round state machine.
+
+    The stage catalog lives in the ``modes`` module (a feature layer). ``kernel``
+    is the primitive layer and must not depend on a feature, so the two lookups
+    it needs are injected by the wiring layer rather than imported here. This
+    keeps the internal dependency graph a DAG (see
+    ``scripts/validate_architecture.py``).
+    """
+
     state: SQLiteStateStore
+    get_stage: Callable[[str], StageSpec]
+    stage_refs_for_route: Callable[[ModeRoute], tuple[str, ...]]
 
     def create(self, profile: TaskProfile, route: ModeRoute) -> RoundRecord:
         round_id = f"r-{uuid.uuid4().hex[:12]}"
@@ -33,7 +50,7 @@ class RoundController:
             round_id,
             profile.objective,
             [m.value for m in route.modes],
-            stage_refs_for_route(route),
+            self.stage_refs_for_route(route),
             profile=profile_payload,
             route_reason=route.reason,
         )
@@ -53,7 +70,7 @@ class RoundController:
                 "triggers": list(result.trigger_codes),
             },
         )
-        stage = get_stage(current.current_stage)
+        stage = self.get_stage(current.current_stage)
         if result.return_to and result.return_to not in stage.permitted_return_stages:
             raise ContractViolation(f"{stage.ref} may not return control to {result.return_to}")
         if result.status is StageStatus.PASS:

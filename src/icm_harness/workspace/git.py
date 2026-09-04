@@ -109,7 +109,20 @@ class GitWorktreeManager:
             raise WorkspaceError("round worktree is not on a branch")
         before = self._git("rev-parse", "HEAD")
         proc = subprocess.run(
-            ["git", "-C", str(self.repo), "merge", "--no-ff", branch, "-m", message],
+            [
+                "git",
+                "-C",
+                str(self.repo),
+                "-c",
+                "user.name=ICM Harness",
+                "-c",
+                "user.email=icm-harness@localhost",
+                "merge",
+                "--no-ff",
+                branch,
+                "-m",
+                message,
+            ],
             text=True,
             capture_output=True,
         )
