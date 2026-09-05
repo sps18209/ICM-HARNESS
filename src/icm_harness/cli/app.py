@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -113,9 +114,127 @@ def _profile_from_args(args) -> TaskProfile:
     )
 
 
+# Profile-tuning flags. If a person typed any of these, they are steering the
+# profile by hand (the "pro" path) and intake is skipped entirely.
+_PROFILE_TUNING_FLAGS = frozenset({
+    "--intent", "--clarity", "--uncertainty", "--stakes", "--reversibility",
+    "--production-change", "--code-intensity", "--research-intensity",
+    "--tool-intensity", "--privacy-restricted", "--budget-usd", "--require-capability",
+})
+
+
+def _profile_flags_present(argv) -> bool:
+    return any(token.split("=", 1)[0] in _PROFILE_TUNING_FLAGS for token in argv)
+
+
+def _env_facts(root: Path) -> dict:
+    """Cheap, local signals to sharpen inference: is this a git repo, and what
+    languages are present. Deliberately shallow — no file contents leave the
+    machine, only a language tally."""
+    exts: dict[str, int] = {}
+    with contextlib.suppress(OSError):
+        for path in list(root.glob("*.*")) + list(root.glob("*/*.*")):
+            if ".harness" in path.parts or ".git" in path.parts:
+                continue
+            exts[path.suffix.lower()] = exts.get(path.suffix.lower(), 0) + 1
+    top = sorted(exts, key=lambda e: exts[e], reverse=True)[:6]
+    return {"is_git_repo": (root / ".git").exists(), "file_types": top}
+
+
+def _resolve_profile(args) -> TaskProfile | None:
+    """Produce the TaskProfile for `icm new`, via LLM-guided intake when the
+    request is a bare plain-English objective and a terminal is present.
+    Returns None only when the user cancels at the confirmation step.
+
+    Intake is skipped (falls back to flag/defaults) when: the user typed any
+    profile flag, `--no-intake` is set, `--dry-run` is set (no model call),
+    the configured agent is not claude-cli, its binary is missing, or there is
+    no interactive terminal. That keeps CI, scripts, and dry-runs unsurprising.
+    """
+    from icm_harness import intake  # local import: keeps CLI startup light
+
+    root = _root()
+    config = load_config(root)
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    applicable = (
+        not getattr(args, "no_intake", False)
+        and not _profile_flags_present(sys.argv)
+        and not getattr(args, "dry_run", False)
+        and config.agent.provider == "claude-cli"
+        and shutil.which(config.agent.executable) is not None
+        and interactive
+    )
+    if not applicable:
+        return _profile_from_args(args)
+
+    try:
+        result = intake.propose(
+            args.objective,
+            env_facts=_env_facts(root),
+            executable=config.agent.executable,
+            model=None,
+        )
+    except Exception as exc:  # noqa: BLE001 — intake is an assist, never a gate
+        print(f"(couldn't shape that automatically — {exc}; using defaults)", file=sys.stderr)
+        return _profile_from_args(args)
+
+    if getattr(args, "yes", False):
+        answers = [q.recommended for q in result.questions]
+        return intake.finalize(args.objective, result, answers)
+
+    answers = _ask_intake_questions(result)
+    if not _confirm_intake(result):
+        return None
+    return intake.finalize(args.objective, result, answers)
+
+
+def _ask_intake_questions(result) -> list[int]:
+    """Present each question, one at a time, and collect a chosen index each.
+    Enter accepts the recommended choice; a bad entry re-asks."""
+    answers: list[int] = []
+    total = len(result.questions)
+    if total:
+        print("\nLet's shape this. (Enter accepts the suggestion.)\n")
+    for n, question in enumerate(result.questions, 1):
+        print(f"  {n}) {question.prompt}")
+        for i, choice in enumerate(question.choices):
+            mark = "  ← suggested" if i == question.recommended else ""
+            print(f"       [{i + 1}] {choice.label}{mark}")
+        answers.append(_read_choice(len(question.choices), question.recommended))
+        print()
+    return answers
+
+
+def _read_choice(n_choices: int, recommended: int) -> int:
+    while True:
+        try:
+            raw = input("     > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return recommended
+        if not raw:
+            return recommended
+        if raw.isdigit() and 1 <= int(raw) <= n_choices:
+            return int(raw) - 1
+        print(f"     (enter 1–{n_choices}, or press Enter for the suggestion)")
+
+
+def _confirm_intake(result) -> bool:
+    if result.restated_objective:
+        print(f"Here's the plan:\n  “{result.restated_objective}”\n")
+    try:
+        raw = input("  [Enter] run  ·  [q] cancel: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return True
+    return raw not in ("q", "quit", "cancel", "n", "no")
+
+
 def cmd_new(args) -> int:
     app = _application(args)
-    record = app.create_round(_profile_from_args(args))
+    profile = _resolve_profile(args)
+    if profile is None:
+        print("cancelled")
+        return 1
+    record = app.create_round(profile)
     if args.run:
         record = anyio.run(app.run_round, record.round_id)
     if args.json:
@@ -476,6 +595,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="exercise the full lifecycle without an AI agent"
     )
     new.add_argument("--json", action="store_true")
+    new.add_argument(
+        "-y", "--yes", action="store_true",
+        help="accept the intake suggestions without the guided questions",
+    )
+    new.add_argument(
+        "--no-intake", action="store_true",
+        help="skip LLM-guided intake; use flags/defaults for the task profile",
+    )
     new.set_defaults(func=cmd_new)
 
     run = sub.add_parser("run", help="run or resume a round")

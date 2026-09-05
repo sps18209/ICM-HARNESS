@@ -26,12 +26,12 @@ CORE = ROOT / "src/icm_harness"
 # kernel (primitives) and integrations (adapters, Rule A) are deliberately absent.
 BARREL_ENFORCED = {
     "modes", "policies", "context", "routing", "execution", "workspace",
-    "agents", "memory", "evaluation", "observability", "cli", "web",
+    "agents", "memory", "evaluation", "observability", "intake", "cli", "web",
 }
 # Core cognitive modules that must not import adapters (Rule A).
 CORE_MODULES = {
     "kernel", "modes", "policies", "context", "routing", "execution",
-    "workspace", "agents", "memory", "evaluation", "observability",
+    "workspace", "agents", "memory", "evaluation", "observability", "intake",
 }
 FORBIDDEN_ADAPTER_PREFIX = "icm_harness.integrations"
 # Every internal top-level module, for the dependency-graph check (Rule C).

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import anyio
 
+from icm_harness.agents.claude_json import extract_json, unwrap_envelope
 from icm_harness.agents.codex_cli import RESULT_SCHEMA
 from icm_harness.agents.contracts import StageInvocation
 from icm_harness.agents.errors import StageAgentError, StageCancelled
@@ -25,9 +26,6 @@ from icm_harness.kernel.contracts import StageResult, StageStatus
 # the fact — an off-contract answer fails the stage closed, exactly as an
 # unparseable codex result does.
 
-# The `claude -p --output-format json` envelope wraps the model's final text in
-# a `result` field alongside run metadata; the stage-contract JSON is inside it.
-_ENVELOPE_RESULT_KEY = "result"
 
 # Auth/config env the `claude` CLI needs to reach a provider. These are
 # forwarded IN ADDITION to `inherit_environment`, because the CLI cannot
@@ -117,49 +115,16 @@ class ClaudeCLIStageAgent:
 
     @staticmethod
     def _unwrap_envelope(stdout: str) -> str:
-        """Return the model's final text from the CLI's JSON envelope.
-
-        Raises StageAgentError when the CLI reported an error, when the
-        envelope is unparseable, or when it carries no textual result.
-        """
-        try:
-            envelope = json.loads(stdout)
-        except json.JSONDecodeError as exc:
-            raise StageAgentError(
-                "claude CLI returned a non-JSON envelope: " + (stdout[-2000:] or "<empty>")
-            ) from exc
-        if not isinstance(envelope, Mapping):
-            raise StageAgentError("claude CLI envelope was not a JSON object")
-        if envelope.get("is_error") or envelope.get("subtype") not in (None, "success"):
-            detail = str(envelope.get(_ENVELOPE_RESULT_KEY) or envelope.get("subtype") or "error")
-            raise StageAgentError("claude CLI reported an error: " + detail[-2000:])
-        result = envelope.get(_ENVELOPE_RESULT_KEY)
-        if not isinstance(result, str) or not result.strip():
-            raise StageAgentError("claude CLI envelope carried no textual result")
-        return result
+        """Return the model's final text from the CLI's JSON envelope, raising
+        StageAgentError on failure. Delegates to the shared parser so the
+        pre-round intake call uses identical envelope handling."""
+        return unwrap_envelope(stdout, error=StageAgentError)
 
     @staticmethod
     def _extract_stage_json(text: str) -> str:
         """Recover the stage-contract JSON object from the model's final text.
-
-        Strips a Markdown code fence if present, else takes the first balanced
-        `{...}` span. The model is instructed to emit bare JSON; this only
-        salvages the common fence/prose slips rather than trusting them.
-        """
-        body = text.strip()
-        if body.startswith("```"):
-            fence_end = body.rfind("```")
-            inner = body[3:fence_end] if fence_end > 3 else body[3:]
-            if inner.lstrip().lower().startswith("json"):
-                inner = inner.lstrip()[4:]
-            body = inner.strip()
-        if body.startswith("{") and body.endswith("}"):
-            return body
-        start = body.find("{")
-        end = body.rfind("}")
-        if start != -1 and end > start:
-            return body[start : end + 1]
-        return body
+        Delegates to the shared parser (fence/prose salvage)."""
+        return extract_json(text)
 
     async def run(self, invocation: StageInvocation) -> StageResult:
         if not self.available():
