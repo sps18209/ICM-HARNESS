@@ -121,6 +121,16 @@ the output is trustworthy:
 On a substantive defect you may hand control back to an earlier stage only when
 that makes sense for the mode; otherwise stop and report rather than pressing on.
 
+## Building or reviewing a user interface
+
+Any stage that touches a **screen, flow, component, or frontend** — building it,
+or reviewing/auditing one — read [`references/ux-laws.md`](references/ux-laws.md)
+and apply the laws that fit: reduce choices, make the primary action large and
+obvious, group related things, follow familiar patterns, keep interactions under
+~400 ms, show progress, and make errors hard to cause and easy to undo. Use its
+review checklist when inspecting a UI. They are heuristics, not gates — apply what
+fits the change, don't force all of them onto a small tweak.
+
 ## Keep a light record, under `.icm/`
 
 If the task benefits from a trail, keep stage notes and artifacts under
