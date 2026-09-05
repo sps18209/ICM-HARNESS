@@ -6,6 +6,7 @@
 | `modes` | stage topology and role boundaries | model selection |
 | `policies` | rigor, risk, authorization overlays | workflow transport |
 | `context` | budget, retrieval contracts, ranking, escalation | provider SDK behavior |
+| `intake` | request → task profile (LLM-guided conversation) | mode selection, execution |
 | `routing` | mode/model decision policy, Bayesian learning | API transport |
 | `execution` | timeout, cancellation, retries, local concurrency | cognitive logic |
 | `workspace` | Git/worktree/checkpoint/promotion mechanics | LLM logic |

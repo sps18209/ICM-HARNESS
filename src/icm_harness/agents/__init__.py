@@ -17,6 +17,8 @@ _PUBLIC: dict[str, str] = {
     "StageCancelled": "errors",
     "make_stage_agent": "factory",
     "render_stage_prompt": "prompting",
+    "unwrap_envelope": "claude_json",
+    "extract_json": "claude_json",
 }
 
 __all__ = sorted(_PUBLIC)
