@@ -66,9 +66,26 @@ retries that you don't get for free.
   `icm new "objective" --run` → `icm status` / `icm diff` → `icm approve` →
   `icm promote`. Start in `icm-dry on` for a safe dry run when unsure.
 
-If neither is present, carry the method yourself, as below. Do not install or
-scaffold the harness into the user's repo to get it — self-driving needs nothing
-but this file.
+**Auto-install when the source is right here.** If `icm` is not on `PATH` but the
+harness *source* is available without touching the user's project, install it into
+the session and use the CLI. It is available when either of these exists:
+
+- this repo **is** the harness — a `pyproject.toml` naming `icm-production-harness`
+  at the repo root (in the harness's own repo a SessionStart hook already does this
+  for you on Claude Code on the web); or
+- a `harness/` folder sits next to this skill (the packaged `.skill` bundle).
+
+Then, once, from that location:
+
+```bash
+python3 -m pip install -e .        # or: pip install -e harness
+icm doctor                         # confirm the CLI is live
+```
+
+Do **not** run `pip install` of the harness into an unrelated user project, and
+never scaffold harness files across their repo root to get the engine. If no
+installable source is present, carry the method yourself, as below — self-driving
+needs nothing but this file.
 
 ## Route the task to the smallest mode that fits
 

@@ -33,6 +33,38 @@ Python engine**: the durable, concurrent path for when you want persisted round
 state, git-worktree isolation, model routing, and bounded retries. Reach for it
 when you outgrow the skill; you don't need it to start.
 
+### Install the skill in your other repos and sessions
+
+The skill is a single self-contained file with no dependencies, so it travels
+easily. Pick the scope you want:
+
+- **Your account (everywhere).** Install it as a personal skill and it loads in
+  **every** Claude Code session — cloud or local, any repo — with no per-repo
+  setup. Package it and use the file card's **Save skill** button:
+
+  ```bash
+  # produces icm.skill; open the card and click "Save skill"
+  python -m scripts.package_skill .claude/skills/icm
+  ```
+
+- **A specific repo (for a team).** Copy the folder in and commit it — everyone
+  working in that repo gets `/icm` automatically:
+
+  ```bash
+  mkdir -p <that-repo>/.claude/skills/icm
+  cp .claude/skills/icm/SKILL.md <that-repo>/.claude/skills/icm/SKILL.md
+  ```
+
+- **A Claude Code on the web environment (all sessions in it).** Add a line to the
+  environment's setup script that drops the skill into the session's skills
+  directory at startup, e.g. `cp` it from a repo the session already checks out,
+  or `git clone` this repo and copy `.claude/skills/icm/SKILL.md` into
+  `~/.claude/skills/icm/`. (A file placed only in a running container's
+  `~/.claude` does not persist — the account or repo scopes above do.)
+
+Once it's in scope, invoke it with `/icm`, or just describe structured work
+("run this as a round", "plan then build then verify", "audit this module").
+
 ## Advanced: the full Python engine (CLI + console)
 
 Three steps from a clone to a running console.
