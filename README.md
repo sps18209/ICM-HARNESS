@@ -100,23 +100,51 @@ The MCP server uses the same `HarnessApplication` as the CLI and extension. It
 does not replace `icm serve`; both can operate on the same initialized
 workspace.
 
-## Claude Code as the engine
+## Coding agent providers
 
-The harness separates two engines: the **orchestration engine** (the Python `icm`
-process — durable round state, git-worktree isolation, model routing, bounded
-retries) and the **stage agent** that does each stage's actual work. A capable
-coding agent such as Claude Code can be either.
+A round's mutating work is carried out by a coding-agent subprocess, chosen by
+`[agent]` in `.harness/config.toml` (or the `ICM_AGENT_*` env overrides). Three
+providers ship:
 
-- **Form A — Claude Code as the stage agent.** Set `provider = "claude-code"` under
-  `[agent]` in `.harness/config.toml` (executable defaults to `claude`). The Python
-  engine still drives the lifecycle, but each stage's work is done by Claude Code in
-  headless mode instead of Codex. Mutating stages need Claude Code to have file-write
-  permission — set it with a `--permission-mode` flag via `extra_args`.
-- **Form B — the folder is the engine.** `icm init` writes `.icm/ENGINE.md`, a
-  self-contained driver that lets Claude Code run the whole ICM method against the
-  workspace with **no external process** — it defines the modes, the stage roles and
-  invariants, and where to read and write. The project's `CLAUDE.md` gets a small
-  pointer to it. Drop the workspace into any repo and the agent can self-drive.
+- `claude-cli` — Anthropic's `claude` CLI in headless mode
+  (`claude -p --output-format json`), **the shipped default**. Needs the
+  `claude` binary on `PATH`; the adapter forwards the `ANTHROPIC_*` /
+  `CLAUDE_CODE_*` auth env the CLI uses.
+- `codex-cli` — OpenAI's `codex exec`. Needs the `codex` binary and its auth.
+- `dry-run` — a deterministic stand-in; no model is called. The default for
+  `icm-dry on`, and what every example above uses until you opt out.
+
+The provider only changes how a stage is executed — every provider returns the
+same structured `StageResult` against the same contract, and the harness grades,
+gates, and isolates the work identically. Selecting `codex-cli` instead:
+
+```bash
+# one-off, via env:
+ICM_AGENT_PROVIDER=codex-cli ICM_AGENT_EXECUTABLE=codex icm new "…" --run
+
+# or persist it in .harness/config.toml:
+#   [agent]
+#   provider = "codex-cli"
+#   executable = "codex"
+#   [models.default]
+#   provider = "codex-cli"   # the model router only offers models whose
+#   family = "codex"         # provider matches [agent].provider
+```
+
+A non-mutating stage runs the agent with its write tools denied
+(`--disallowed-tools`); a mutating stage runs under `--permission-mode
+acceptEdits` so it is non-interactive without granting a blanket
+permission bypass. `icm doctor` reports the configured agent binary either way.
+
+## The folder is the engine
+
+Beyond running the harness as a process, the whole ICM method can be carried by
+the workspace itself. `icm init` writes `.icm/ENGINE.md`, a self-contained driver
+that lets a capable coding agent (e.g. Claude Code) run the method — mode routing,
+the stage roles and invariants, and where to read and write — against the
+workspace with **no external process**. The project's `CLAUDE.md` gets a small
+pointer to it, so the agent finds the engine. Drop the workspace into any repo and
+it can self-drive.
 
 **`icm init` is non-destructive.** It never overwrites an existing project file
 (your `CLAUDE.md`, `AGENTS.md`, a customized `.harness/config.toml`, or a populated
