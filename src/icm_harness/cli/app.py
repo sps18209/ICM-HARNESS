@@ -16,6 +16,7 @@ import anyio
 from icm_harness.application import HarnessApplication
 from icm_harness.config import load_config, write_default_config
 from icm_harness.kernel.contracts import TaskIntent, TaskProfile
+from icm_harness.templates.engine import ensure_claude_pointer, install_engine
 
 
 def _root() -> Path:
@@ -59,13 +60,37 @@ def _print_round(record) -> None:
 def cmd_init(args) -> int:
     target = Path(args.path).resolve()
     target.mkdir(parents=True, exist_ok=True)
+    force = bool(getattr(args, "force", False))
     template = resources.files("icm_harness").joinpath("templates", "workspace")
+    preserved: list[str] = []
+    # Non-destructive scaffold: copy each template file only when it is missing
+    # (or --force). A pre-existing project file (e.g. a hand-written CLAUDE.md) is
+    # never overwritten. Directories are created as needed.
     with resources.as_file(template) as template_path:
-        shutil.copytree(template_path, target, dirs_exist_ok=True)
+        for src in sorted(template_path.rglob("*")):
+            rel = src.relative_to(template_path)
+            dst = target / rel
+            if src.is_dir():
+                dst.mkdir(parents=True, exist_ok=True)
+                continue
+            if dst.exists() and not force:
+                if dst.read_bytes() != src.read_bytes():
+                    preserved.append(str(rel))
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+    # Form B engine driver + the CLAUDE.md pointer that links to it.
+    engine = install_engine(target, force=force)
+    pointer = ensure_claude_pointer(target)
     (target / ".harness/runtime").mkdir(parents=True, exist_ok=True)
-    write_default_config(target / ".harness/config.toml")
+    config_path = target / ".harness/config.toml"
+    if not config_path.exists() or force:
+        write_default_config(config_path)
     print(target)
     print("initialized=.harness/config.toml")
+    print(f"engine=.icm/ENGINE.md ({engine}); CLAUDE.md pointer ({pointer})")
+    if preserved:
+        print("preserved (existing files, not overwritten): " + ", ".join(preserved))
     return 0
 
 
@@ -437,6 +462,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     init = sub.add_parser("init", help="initialize an ICM workspace")
     init.add_argument("path", nargs="?", default=".")
+    init.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite existing workspace files (default: never overwrite)",
+    )
     init.set_defaults(func=cmd_init)
 
     new = sub.add_parser("new", help="create and optionally run a round")

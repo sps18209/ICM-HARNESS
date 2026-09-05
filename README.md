@@ -13,7 +13,27 @@ The harness separates five concerns that are commonly collapsed into one agent l
 The custom control plane remains independent from any one model provider, coding agent, workflow engine,
 MCP server, memory vendor, or observability backend.
 
-## Quickstart (novice)
+## Use it as a skill (recommended)
+
+The lightest way to use the harness is as something a coding agent **calls** — you
+stay the driver, the harness guides one task and steps back. Two front doors, no
+setup that touches your repo:
+
+- **The `icm` skill** — [`.claude/skills/icm/SKILL.md`](.claude/skills/icm/SKILL.md).
+  A capable agent (e.g. Claude Code) invokes it to run the ICM method — mode
+  routing, one role per stage, isolated mutations, human gates — self-driving when
+  the engine isn't installed. By design it **never scaffolds files at your repo
+  root and never overwrites your files**; its own state stays under `.icm/`.
+- **The MCP tools** — the stdio server (`icm-mcp`) exposes rounds as callable tools
+  (`icm_create_round`, `icm_run_round`, `icm_diff`, `icm_approve_gate`,
+  `icm_promote_round`, …). Claude Code calls them and stays in charge between calls.
+
+Everything below — the CLI, the operator console, `icm init` — is the **full
+Python engine**: the durable, concurrent path for when you want persisted round
+state, git-worktree isolation, model routing, and bounded retries. Reach for it
+when you outgrow the skill; you don't need it to start.
+
+## Advanced: the full Python engine (CLI + console)
 
 Three steps from a clone to a running console.
 
@@ -135,6 +155,22 @@ A non-mutating stage runs the agent with its write tools denied
 (`--disallowed-tools`); a mutating stage runs under `--permission-mode
 acceptEdits` so it is non-interactive without granting a blanket
 permission bypass. `icm doctor` reports the configured agent binary either way.
+
+## The folder is the engine
+
+Beyond running the harness as a process, the whole ICM method can be carried by
+the workspace itself. `icm init` writes `.icm/ENGINE.md`, a self-contained driver
+that lets a capable coding agent (e.g. Claude Code) run the method — mode routing,
+the stage roles and invariants, and where to read and write — against the
+workspace with **no external process**. The project's `CLAUDE.md` gets a small
+pointer to it, so the agent finds the engine. Drop the workspace into any repo and
+it can self-drive.
+
+**`icm init` is non-destructive.** It never overwrites an existing project file
+(your `CLAUDE.md`, `AGENTS.md`, a customized `.harness/config.toml`, or a populated
+Context Wiki page). A pre-existing `CLAUDE.md` is preserved and only gets the engine
+pointer appended (idempotently). Pass `--force` to overwrite with the shipped
+templates.
 
 ## Core modes
 
