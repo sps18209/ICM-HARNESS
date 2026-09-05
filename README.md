@@ -100,6 +100,42 @@ The MCP server uses the same `HarnessApplication` as the CLI and extension. It
 does not replace `icm serve`; both can operate on the same initialized
 workspace.
 
+## Coding agent providers
+
+A round's mutating work is carried out by a coding-agent subprocess, chosen by
+`[agent]` in `.harness/config.toml` (or the `ICM_AGENT_*` env overrides). Three
+providers ship:
+
+- `claude-cli` — Anthropic's `claude` CLI in headless mode
+  (`claude -p --output-format json`), **the shipped default**. Needs the
+  `claude` binary on `PATH`; the adapter forwards the `ANTHROPIC_*` /
+  `CLAUDE_CODE_*` auth env the CLI uses.
+- `codex-cli` — OpenAI's `codex exec`. Needs the `codex` binary and its auth.
+- `dry-run` — a deterministic stand-in; no model is called. The default for
+  `icm-dry on`, and what every example above uses until you opt out.
+
+The provider only changes how a stage is executed — every provider returns the
+same structured `StageResult` against the same contract, and the harness grades,
+gates, and isolates the work identically. Selecting `codex-cli` instead:
+
+```bash
+# one-off, via env:
+ICM_AGENT_PROVIDER=codex-cli ICM_AGENT_EXECUTABLE=codex icm new "…" --run
+
+# or persist it in .harness/config.toml:
+#   [agent]
+#   provider = "codex-cli"
+#   executable = "codex"
+#   [models.default]
+#   provider = "codex-cli"   # the model router only offers models whose
+#   family = "codex"         # provider matches [agent].provider
+```
+
+A non-mutating stage runs the agent with its write tools denied
+(`--disallowed-tools`); a mutating stage runs under `--permission-mode
+acceptEdits` so it is non-interactive without granting a blanket
+permission bypass. `icm doctor` reports the configured agent binary either way.
+
 ## Core modes
 
 - `discovery`: frame -> explore -> research -> adversarial -> synthesis -> validate

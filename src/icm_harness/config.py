@@ -30,8 +30,8 @@ class ContextConfig:
 
 @dataclass(frozen=True, slots=True)
 class AgentConfig:
-    provider: str = "codex-cli"
-    executable: str = "codex"
+    provider: str = "claude-cli"
+    executable: str = "claude"
     model: str = "default"
     extra_args: tuple[str, ...] = ()
     inherit_environment: tuple[str, ...] = (
@@ -42,7 +42,6 @@ class AgentConfig:
         "TMPDIR",
         "USER",
         "HOME",
-        "CODEX_HOME",
     )
 
 
