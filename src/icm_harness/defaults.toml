@@ -14,11 +14,11 @@ max_budget_tokens = 24000
 max_tier = 4
 
 [agent]
-provider = "codex-cli"
-executable = "codex"
+provider = "claude-cli"
+executable = "claude"
 model = "default"
 extra_args = []
-inherit_environment = ["PATH", "LANG", "LC_ALL", "TERM", "TMPDIR", "USER", "HOME", "CODEX_HOME"]
+inherit_environment = ["PATH", "LANG", "LC_ALL", "TERM", "TMPDIR", "USER", "HOME"]
 
 [workspace]
 strategy = "worktree"
@@ -30,8 +30,8 @@ port = 8765
 poll_interval_ms = 1500
 
 [models.default]
-provider = "codex-cli"
-family = "codex"
+provider = "claude-cli"
+family = "claude"
 max_context = 200000
 input_cost_per_million = 0.0
 output_cost_per_million = 0.0

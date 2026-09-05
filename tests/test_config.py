@@ -5,7 +5,7 @@ def test_default_config_round_trips(tmp_path):
     path = write_default_config(tmp_path / ".harness/config.toml")
     config = load_config(tmp_path)
     assert path.exists()
-    assert config.agent.provider == "codex-cli"
+    assert config.agent.provider == "claude-cli"
     assert config.models[0].name == "default"
     assert config.stage_budgets["build.planner"] == 9000
 
