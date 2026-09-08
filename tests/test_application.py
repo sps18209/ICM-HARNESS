@@ -67,6 +67,37 @@ def test_decision_round_pauses_at_and_resumes_from_human_gate(tmp_path):
     assert len(app.list_artifacts(created.round_id)) == 7
 
 
+def test_gate_approval_is_scoped_to_the_current_visit(tmp_path):
+    # H3: an approval recorded for one visit must not auto-satisfy a later re-entry of the
+    # same gate. Approval counts only when it follows the most recent gate_waiting.
+    initialize(tmp_path)
+    app = HarnessApplication(tmp_path, dry_run=True)
+    created = app.create_round(TaskProfile("choose a migration", intent=TaskIntent.DECIDE))
+    gate = "decision.decide"
+    rid = created.round_id
+
+    assert app._gate_is_approved(rid, gate) is False
+    app._event(rid, "gate_waiting", gate, {})
+    assert app._gate_is_approved(rid, gate) is False
+    app._event(rid, "gate_approved", gate, {"stage": gate})
+    assert app._gate_is_approved(rid, gate) is True
+    # Re-entry: a fresh gate_waiting revokes the stale approval until re-approved.
+    app._event(rid, "gate_waiting", gate, {})
+    assert app._gate_is_approved(rid, gate) is False
+    app._event(rid, "gate_approved", gate, {"stage": gate})
+    assert app._gate_is_approved(rid, gate) is True
+
+
+def test_approve_promotion_requires_a_closed_round(tmp_path):
+    import pytest
+
+    initialize(tmp_path)
+    app = HarnessApplication(tmp_path, dry_run=True)
+    created = app.create_round(build_profile())  # active, not closed
+    with pytest.raises(ValueError, match="must be closed"):
+        app.approve_promotion(created.round_id)
+
+
 class EmptyAgent:
     async def run(self, invocation: StageInvocation) -> StageResult:
         return StageResult(StageStatus.PASS, "claimed success without artifacts")
@@ -132,6 +163,16 @@ def test_mutation_is_isolated_until_explicit_promotion(tmp_path):
     assert (Path(completed.workspace_path) / "produced.txt").read_text() == "isolated\n"
     assert "produced.txt" in app.diff_round(created.round_id)
 
+    # C2: promotion is a human gate, not an implicit side effect of running. It must refuse
+    # to merge until promotion is explicitly approved.
+    import pytest
+
+    with pytest.raises(ValueError, match="requires explicit promotion approval"):
+        app.promote_round(created.round_id)
+    assert not (tmp_path / "produced.txt").exists()  # still isolated
+
+    app.approve_promotion(created.round_id)
     app.promote_round(created.round_id)
     assert (tmp_path / "produced.txt").read_text() == "isolated\n"
+    assert any(event.kind == "merge_approved" for event in app.events(created.round_id))
     assert any(event.kind == "round_promoted" for event in app.events(created.round_id))

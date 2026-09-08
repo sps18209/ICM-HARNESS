@@ -353,6 +353,19 @@ def cmd_diff(args) -> int:
     return 0
 
 
+def cmd_approve_merge(args) -> int:
+    app = _application(args)
+    record = app.approve_promotion(_round_id(app, args.round_id))
+    if args.promote:
+        record = app.promote_round(record.round_id)
+        _print_round(record)
+        print("promoted=yes")
+    else:
+        _print_round(record)
+        print("merge_approved=yes")
+    return 0
+
+
 def cmd_promote(args) -> int:
     app = _application(args)
     record = app.promote_round(_round_id(app, args.round_id))
@@ -651,6 +664,15 @@ def build_parser() -> argparse.ArgumentParser:
     diff = sub.add_parser("diff", help="show changes in an isolated round worktree")
     _add_round_argument(diff)
     diff.set_defaults(func=cmd_diff)
+
+    approve_merge = sub.add_parser(
+        "approve-merge", help="approve merging a closed round worktree (required before promote)"
+    )
+    _add_round_argument(approve_merge)
+    approve_merge.add_argument(
+        "--promote", action="store_true", help="also merge immediately once approved"
+    )
+    approve_merge.set_defaults(func=cmd_approve_merge)
 
     promote = sub.add_parser("promote", help="merge a closed round worktree into the base branch")
     _add_round_argument(promote)

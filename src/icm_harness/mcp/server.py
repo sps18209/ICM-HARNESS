@@ -137,8 +137,26 @@ def _tool_definitions() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "icm_approve_promotion",
+            "description": (
+                "Record explicit human approval to merge a closed round's worktree. Required "
+                "before icm_promote_round will merge — the merge is a human gate, not an "
+                "implicit side effect of running the round."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "round_id": round_id,
+                    "promote": {"type": "boolean", "default": False},
+                },
+            },
+        },
+        {
             "name": "icm_promote_round",
-            "description": "Promote a closed round's isolated worktree into the base branch.",
+            "description": (
+                "Promote a closed round's isolated worktree into the base branch. Refuses "
+                "unless icm_approve_promotion has recorded approval first."
+            ),
             "inputSchema": {"type": "object", "properties": {"round_id": round_id}},
         },
         {
@@ -200,6 +218,11 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any]) -> Any:
         record = app.retry_round(_round_id(app, arguments.get("round_id")))
         if arguments.get("run"):
             record = anyio.run(app.run_round, record.round_id)
+        return app.round_payload(record)
+    if name == "icm_approve_promotion":
+        record = app.approve_promotion(_round_id(app, arguments.get("round_id")))
+        if arguments.get("promote"):
+            record = app.promote_round(record.round_id)
         return app.round_payload(record)
     if name == "icm_promote_round":
         return app.round_payload(app.promote_round(_round_id(app, arguments.get("round_id"))))

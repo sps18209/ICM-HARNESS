@@ -133,6 +133,27 @@ class HarnessApplication:
             record.workspace_path
         )
 
+    def approve_promotion(self, round_id: str) -> RoundRecord:
+        """Record explicit human approval to merge a closed round's worktree.
+
+        This is a distinct, separately-audited step from *running* the round: the merge is a
+        human gate (``AuthorizationPolicy.require_human_approval_for_merge``), so it must not
+        happen as an implicit side effect of ``run_round``. ``promote_round`` refuses to merge
+        until this approval has been recorded.
+        """
+        record = self.state.get_round(round_id)
+        if record.status != "closed":
+            raise ValueError(f"round {round_id} must be closed before its promotion is approved")
+        if not record.workspace_path:
+            raise ValueError(f"round {round_id} has no isolated workspace to promote")
+        if any(event.kind == "round_promoted" for event in self.state.list_events(round_id)):
+            raise ValueError(f"round {round_id} was already promoted")
+        self._event(round_id, "merge_approved", None, {})
+        return self.state.get_round(round_id)
+
+    def _merge_is_approved(self, round_id: str) -> bool:
+        return any(event.kind == "merge_approved" for event in self.state.list_events(round_id))
+
     def promote_round(self, round_id: str) -> RoundRecord:
         record = self.state.get_round(round_id)
         if record.status != "closed":
@@ -141,6 +162,11 @@ class HarnessApplication:
             raise ValueError(f"round {round_id} has no isolated workspace to promote")
         if any(event.kind == "round_promoted" for event in self.state.list_events(round_id)):
             raise ValueError(f"round {round_id} was already promoted")
+        if not self._merge_is_approved(round_id):
+            raise ValueError(
+                f"round {round_id} requires explicit promotion approval before merge — "
+                "call approve_promotion (icm approve-merge / icm_approve_promotion) first"
+            )
         commit = GitWorktreeManager(self.root, self.config.workspace.worktree_root).promote(
             record.workspace_path, message=f"ICM round {round_id}: {record.objective}"
         )
@@ -483,10 +509,23 @@ class HarnessApplication:
         return TaskProfile(**data)
 
     def _gate_is_approved(self, round_id: str, stage_ref: str) -> bool:
-        return any(
-            event.kind == "gate_approved" and event.stage_ref == stage_ref
-            for event in self.state.list_events(round_id)
-        )
+        """True only if the gate was approved on the *current* visit.
+
+        A stage can be re-entered (a later stage ``return_to``s past it, or the round is
+        retried after edits). Scoping the approval to events after the most recent
+        ``gate_waiting`` for this stage means a one-time approval can't silently authorize a
+        second, changed pass through the same gate.
+        """
+        last_waiting_id = -1
+        last_approved_id = -1
+        for event in self.state.list_events(round_id):
+            if event.stage_ref != stage_ref:
+                continue
+            if event.kind == "gate_waiting":
+                last_waiting_id = event.id
+            elif event.kind == "gate_approved":
+                last_approved_id = event.id
+        return last_approved_id > last_waiting_id and last_approved_id != -1
 
     def _resource_key(self, stage_ref: str, workspace: Path, mutates: bool) -> str:
         access = "write" if mutates else "read"
