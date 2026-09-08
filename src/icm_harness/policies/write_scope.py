@@ -74,7 +74,7 @@ class WriteScope:
                 out.append(candidate)
         return tuple(out)
 
-    def check(self, paths: object) -> "WriteScopeCheck":
+    def check(self, paths: object) -> WriteScopeCheck:
         """Evaluate a change set against this scope."""
         offending = self.violations(paths)
         return WriteScopeCheck(role=self.role, in_scope=not offending, violations=offending)
