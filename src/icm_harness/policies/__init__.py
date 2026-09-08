@@ -14,6 +14,12 @@ _PUBLIC: dict[str, str] = {
     "AuthorizationPolicy": "authorization",
     "AgentRunSettings": "runtime_settings",
     "SituationalSettingsPolicy": "runtime_settings",
+    "WriteScope": "write_scope",
+    "WriteScopeCheck": "write_scope",
+    "ApprovalClass": "approval",
+    "ActionRequest": "approval",
+    "classify": "approval",
+    "requires_human_gate": "approval",
 }
 
 __all__ = sorted(_PUBLIC)
