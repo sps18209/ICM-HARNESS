@@ -99,7 +99,8 @@ def test_real_codex_runs_in_isolated_worktree(tmp_path):
     artifacts = app.list_artifacts(created.round_id)
     assert diff or artifacts, "real agent produced neither a diff nor artifacts"
 
-    # If it completed, promotion must be an explicit, clean merge.
+    # If it completed, promotion must be an explicit, approved, clean merge.
     if result.status == "closed" and latest.workspace_path:
+        app.approve_promotion(created.round_id)
         app.promote_round(created.round_id)
         assert any(event.kind == "round_promoted" for event in app.events(created.round_id))

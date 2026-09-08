@@ -321,6 +321,10 @@ def test_readonly_stage_denies_write_tools(tmp_path):
     assert "--disallowed-tools" in read_only
     for tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
         assert tool in read_only
+    # C1: a read-only stage runs under plan mode (blocks mutating tool use at the CLI level),
+    # not acceptEdits — it may run in the real working tree with no worktree to contain it.
+    assert read_only[read_only.index("--permission-mode") + 1] == "plan"
 
     mutating = _command_for(True)
     assert "--disallowed-tools" not in mutating
+    assert mutating[mutating.index("--permission-mode") + 1] == "acceptEdits"

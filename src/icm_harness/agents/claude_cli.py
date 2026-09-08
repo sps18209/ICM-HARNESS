@@ -71,11 +71,17 @@ class ClaudeCLIStageAgent:
     executable: str = "claude"
     extra_args: tuple[str, ...] = ()
     inherit_environment: tuple[str, ...] = ("PATH", "HOME", "TERM", "LANG")
-    # A non-mutating stage runs under this permission mode; a mutating one
-    # additionally accepts edits. "acceptEdits" auto-approves file edits so the
-    # run is non-interactive; an operator can override via extra_args. This
-    # deliberately does NOT default to "bypassPermissions".
+    # A MUTATING stage runs under this permission mode. "acceptEdits" auto-approves
+    # file edits so the run is non-interactive; an operator can override via
+    # extra_args. This deliberately does NOT default to "bypassPermissions".
     permission_mode: str = "acceptEdits"
+    # A NON-MUTATING (read-only) stage runs under "plan" mode, which blocks edits
+    # and mutating tool use at the CLI level rather than only refusing the write
+    # tools by name. This matters because review / discovery / decision modes have
+    # no mutating stage, so no worktree is created and the stage runs in the real
+    # working tree (cwd=workspace); "acceptEdits" there would let a Bash `>` redirect
+    # clobber the user's files. "plan" is the same posture pre-round intake uses.
+    read_only_permission_mode: str = "plan"
 
     def available(self) -> bool:
         return shutil.which(self.executable) is not None
@@ -97,15 +103,17 @@ class ClaudeCLIStageAgent:
         )
 
     def _command(self, invocation: StageInvocation) -> list[str]:
+        mutates = invocation.stage.mutates_workspace
+        mode = self.permission_mode if mutates else self.read_only_permission_mode
         command = [
             self.executable,
             "--print",
             "--output-format",
             "json",
             "--permission-mode",
-            self.permission_mode,
+            mode,
         ]
-        if not invocation.stage.mutates_workspace:
+        if not mutates:
             command.append("--disallowed-tools")
             command.extend(_READ_ONLY_DENIED_TOOLS)
         if invocation.model and invocation.model != "default":
