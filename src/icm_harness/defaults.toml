@@ -36,6 +36,15 @@ poll_interval_ms = 1500
 profiler = "claude-cli"
 ask_threshold = 0.75
 
+[evaluation]
+# Advisory Jev (TypeSafe System One) reviews, "none" or "typesafe". Both need
+# the systemone extras and TYPESAFE_API_KEY; both only ever ADD scrutiny —
+# they are recorded as events and can never pass a stage or approve a merge.
+# semantic_gate grades each passing stage's outputs against the objective;
+# promotion_review sweeps the round diff before merge approval (ADR-0010).
+semantic_gate = "none"
+promotion_review = "none"
+
 [models.default]
 provider = "claude-cli"
 family = "claude"

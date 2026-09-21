@@ -235,3 +235,96 @@ def test_intake_config_defaults_and_validation(tmp_path):
 def test_intake_profiler_env_override(tmp_path):
     config = load_config(tmp_path, environ={"ICM_INTAKE_PROFILER": "typesafe"})
     assert config.intake.profiler == "typesafe"
+
+
+# --- semantic stage gate (point 2) --------------------------------------------
+
+
+def test_review_stage_outputs_folds_answers_and_state(monkeypatch):
+    client = FakeClient(
+        {
+            "addresses_objective": _noul(0.9),
+            "claims_verified": _noul(0.3),
+            "quality": SimpleNamespace(score=1.7, confidence=0.8),
+        }
+    )
+    from icm_harness.integrations.typesafe import review_stage_outputs
+
+    review = review_stage_outputs(
+        "ship the widget",
+        "build.tester",
+        {"test-report.json": '{"passed": true}', "notes.md": "# notes"},
+        client=client,
+    )
+    assert review.addresses_objective == pytest.approx(0.9)
+    assert review.claims_verified == pytest.approx(0.3)
+    assert review.quality == pytest.approx(0.85)
+    assert review.concerns() == ("verification claims may be unsubstantiated",)
+    (call,) = client.calls
+    assert "ship the widget" in call["state"]
+    assert "build.tester" in call["state"]
+    assert "test-report.json" in call["state"] and "# notes" in call["state"]
+
+
+def test_review_stage_outputs_clips_oversized_artifacts():
+    client = FakeClient(
+        {
+            "addresses_objective": _noul(0.9),
+            "claims_verified": _noul(0.9),
+            "quality": SimpleNamespace(score=2.0, confidence=0.9),
+        }
+    )
+    from icm_harness.integrations.typesafe import review_stage_outputs
+
+    review_stage_outputs(
+        "objective", "stage", {"big.md": "x" * 100_000}, client=client, per_output_chars=1_000
+    )
+    (call,) = client.calls
+    assert len(call["state"]) < 5_000
+    assert "truncated for review" in call["state"]
+
+
+# --- pre-promotion diff review (point 3) --------------------------------------
+
+
+def test_review_diff_concerns_and_approval_class():
+    from icm_harness.integrations.typesafe import review_diff
+    from icm_harness.policies import ApprovalClass
+
+    clean = review_diff(
+        "objective",
+        "diff --git a/x b/x",
+        client=FakeClient(
+            {
+                "consistent_with_objective": _noul(0.95),
+                "touches_production_config": _noul(0.02),
+                "removes_tests": _noul(0.01),
+                "exposes_secrets": _noul(0.01),
+            }
+        ),
+    )
+    assert clean.concerns() == ()
+    assert clean.suggested_approval_class() is ApprovalClass.LOCAL_REVERSIBLE
+
+    scary = review_diff(
+        "objective",
+        "diff --git a/x b/x",
+        client=FakeClient(
+            {
+                "consistent_with_objective": _noul(0.2),
+                "touches_production_config": _noul(0.8),
+                "removes_tests": _noul(0.1),
+                "exposes_secrets": _noul(0.9),
+            }
+        ),
+    )
+    assert len(scary.concerns()) == 3
+    # secrets outrank the other flags in the ADR-0010 taxonomy
+    assert scary.suggested_approval_class() is ApprovalClass.SECURITY_SENSITIVE
+
+
+def test_review_diff_missing_answers_default_benign():
+    from icm_harness.integrations.typesafe import review_diff
+
+    review = review_diff("objective", "diff", client=FakeClient({}))
+    assert review.concerns() == ()

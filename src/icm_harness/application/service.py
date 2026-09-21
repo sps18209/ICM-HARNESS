@@ -148,6 +148,7 @@ class HarnessApplication:
             raise ValueError(f"round {round_id} has no isolated workspace to promote")
         if any(event.kind == "round_promoted" for event in self.state.list_events(round_id)):
             raise ValueError(f"round {round_id} was already promoted")
+        self._promotion_review(record)
         self._event(round_id, "merge_approved", None, {})
         return self.state.get_round(round_id)
 
@@ -342,6 +343,7 @@ class HarnessApplication:
                     )
                 if last_result.status is StageStatus.PASS:
                     require_stage_outputs(stage, artifact_dir)
+                    self._semantic_gate(record, stage.ref, dict(last_result.artifacts))
                 self._event(
                     record.round_id,
                     "stage_completed",
@@ -391,6 +393,62 @@ class HarnessApplication:
         self.state.set_status(record.round_id, target_status, last_error=last_result.summary)
         self._model_feedback(model_name, stage.ref, False)
         return last_result
+
+    def _semantic_gate(self, record: RoundRecord, stage_ref: str, outputs: dict[str, str]) -> None:
+        """Advisory Jev grading of a passing stage's outputs (typesafe-jev.md
+        point 2). It records events for humans and reward attribution — it can
+        never fail the stage, and any adapter error degrades to an event."""
+        if self.dry_run or self.config.evaluation.semantic_gate != "typesafe" or not outputs:
+            return
+        try:
+            from icm_harness.integrations.typesafe import review_stage_outputs
+
+            review = review_stage_outputs(record.objective, stage_ref, outputs)
+            self._event(
+                record.round_id,
+                "semantic_gate",
+                stage_ref,
+                {**review.as_payload(), "concerns": list(review.concerns())},
+            )
+        except Exception as exc:  # noqa: BLE001 — advisory review, never a gate
+            self._event(
+                record.round_id,
+                "semantic_gate_unavailable",
+                stage_ref,
+                {"error": f"{type(exc).__name__}: {exc}"[-500:]},
+            )
+
+    def _promotion_review(self, record: RoundRecord) -> None:
+        """Advisory Jev sweep of the round diff before merge approval
+        (typesafe-jev.md point 3, backing ADR-0010). A red flag may only add
+        scrutiny — the human approval that follows stays the authority, and
+        any adapter error degrades to an event."""
+        if self.dry_run or self.config.evaluation.promotion_review != "typesafe":
+            return
+        try:
+            from icm_harness.integrations.typesafe import review_diff
+
+            diff = self.diff_round(record.round_id)
+            if not diff:
+                return
+            review = review_diff(record.objective, diff)
+            self._event(
+                record.round_id,
+                "promotion_reviewed",
+                None,
+                {
+                    **review.as_payload(),
+                    "concerns": list(review.concerns()),
+                    "suggested_approval_class": review.suggested_approval_class().value,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — advisory review, never a gate
+            self._event(
+                record.round_id,
+                "promotion_review_unavailable",
+                None,
+                {"error": f"{type(exc).__name__}: {exc}"[-500:]},
+            )
 
     def _workspace_for(self, record: RoundRecord, mutates: bool) -> Path:
         if self.dry_run:
