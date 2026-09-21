@@ -52,6 +52,15 @@ class IntakeConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class EvaluationConfig:
+    # Both are advisory Jev reviews (opt-in; send round text to an external API):
+    # semantic_gate grades each passing stage's outputs, promotion_review sweeps
+    # the round diff before merge approval. "none" or "typesafe".
+    semantic_gate: str = "none"
+    promotion_review: str = "none"
+
+
+@dataclass(frozen=True, slots=True)
 class WorkspaceConfig:
     strategy: str = "worktree"
     worktree_root: str = ".harness/worktrees"
@@ -89,6 +98,7 @@ class HarnessConfig:
     models: tuple[ModelConfig, ...] = field(default_factory=tuple)
     stage_budgets: Mapping[str, int] = field(default_factory=dict)
     intake: IntakeConfig = IntakeConfig()
+    evaluation: EvaluationConfig = EvaluationConfig()
 
 
 def _table(data: Mapping[str, Any], name: str) -> Mapping[str, Any]:
@@ -157,6 +167,11 @@ def load_config(root: str | Path, *, environ: Mapping[str, str] | None = None) -
     if intake.profiler not in {"claude-cli", "typesafe"}:
         raise ValueError("intake.profiler must be 'claude-cli' or 'typesafe'")
 
+    evaluation = EvaluationConfig(**_known(EvaluationConfig, _table(data, "evaluation")))
+    for name in ("semantic_gate", "promotion_review"):
+        if getattr(evaluation, name) not in {"none", "typesafe"}:
+            raise ValueError(f"evaluation.{name} must be 'none' or 'typesafe'")
+
     model_configs = []
     for name, values in _table(data, "models").items():
         if not isinstance(values, Mapping):
@@ -169,5 +184,13 @@ def load_config(root: str | Path, *, environ: Mapping[str, str] | None = None) -
     budget_values = _table(data, "stage_budgets")
     stage_budgets = {str(key): int(value) for key, value in budget_values.items()}
     return HarnessConfig(
-        runtime, context, agent, workspace, web, tuple(model_configs), stage_budgets, intake
+        runtime,
+        context,
+        agent,
+        workspace,
+        web,
+        tuple(model_configs),
+        stage_budgets,
+        intake,
+        evaluation,
     )

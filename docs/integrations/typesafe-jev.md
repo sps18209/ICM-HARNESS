@@ -1,9 +1,13 @@
 # Integration analysis: TypeSafe Jev (System One model)
 
-Status: Point 1 (intake profiling) implemented — adapter at
-`src/icm_harness/integrations/typesafe/adapter.py`, opt-in via
-`[intake] profiler = "typesafe"` with `TYPESAFE_API_KEY` set and the
-`systemone` extras installed. Points 2–4 remain proposed.
+Status: Points 1–3 implemented in
+`src/icm_harness/integrations/typesafe/adapter.py`, each opt-in with
+`TYPESAFE_API_KEY` set and the `systemone` extras installed: intake via
+`[intake] profiler = "typesafe"`; the semantic stage gate and the
+pre-promotion diff review via `[evaluation] semantic_gate` /
+`promotion_review = "typesafe"` (both advisory — recorded as
+`semantic_gate` / `promotion_reviewed` events, never able to pass a
+stage or approve a merge). Point 4 (context ranking) remains proposed.
 
 ## What Jev is
 

@@ -176,3 +176,67 @@ def test_mutation_is_isolated_until_explicit_promotion(tmp_path):
     assert (tmp_path / "produced.txt").read_text() == "isolated\n"
     assert any(event.kind == "merge_approved" for event in app.events(created.round_id))
     assert any(event.kind == "round_promoted" for event in app.events(created.round_id))
+
+
+def test_advisory_jev_reviews_grade_stages_and_promotion_without_gating(tmp_path, monkeypatch):
+    """typesafe-jev.md points 2 & 3: reviews are recorded as events, degrade to
+    an *_unavailable event on adapter failure, and never block the round."""
+    from icm_harness.integrations.typesafe import DiffReview, StageReview
+
+    initialize(tmp_path)
+    config_path = tmp_path / ".harness/config.toml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        .replace('semantic_gate = "none"', 'semantic_gate = "typesafe"')
+        .replace('promotion_review = "none"', 'promotion_review = "typesafe"'),
+        encoding="utf-8",
+    )
+    (tmp_path / ".gitignore").write_text(
+        ".harness/runtime/\n.harness/worktrees/\n", encoding="utf-8"
+    )
+    (tmp_path / "base.txt").write_text("base\n", encoding="utf-8")
+    git(tmp_path, "init")
+    git(tmp_path, "add", ".gitignore", "base.txt")
+    git(tmp_path, "-c", "user.name=T", "-c", "user.email=t@e.c", "commit", "-m", "base")
+
+    def fake_stage_review(objective, stage_ref, outputs, **kwargs):
+        if stage_ref == "build.writer":
+            raise RuntimeError("api down")
+        return StageReview(addresses_objective=0.9, claims_verified=0.4, quality=0.8)
+
+    def fake_diff_review(objective, diff, **kwargs):
+        assert "produced.txt" in diff
+        return DiffReview(
+            consistent_with_objective=0.9,
+            touches_production_config=0.8,
+            removes_tests=0.0,
+            exposes_secrets=0.0,
+        )
+
+    monkeypatch.setattr(
+        "icm_harness.integrations.typesafe.review_stage_outputs", fake_stage_review
+    )
+    monkeypatch.setattr("icm_harness.integrations.typesafe.review_diff", fake_diff_review)
+
+    app = HarnessApplication(tmp_path, agent=WorktreeAgent())
+    created = app.create_round(build_profile())
+    completed = anyio.run(app.run_round, created.round_id)
+    assert completed.status == "closed"  # the failing reviewer never blocked anything
+
+    events = app.events(created.round_id)
+    graded = [e for e in events if e.kind == "semantic_gate"]
+    degraded = [e for e in events if e.kind == "semantic_gate_unavailable"]
+    assert graded and all(
+        "verification claims may be unsubstantiated" in e.payload["concerns"] for e in graded
+    )
+    assert [e.stage_ref for e in degraded] == ["build.writer"]
+
+    app.approve_promotion(created.round_id)
+    events = app.events(created.round_id)
+    (reviewed,) = [e for e in events if e.kind == "promotion_reviewed"]
+    assert reviewed.payload["suggested_approval_class"] == "external_action"
+    assert "production or deployment configuration" in reviewed.payload["concerns"][0]
+    # the review is advisory: approval was still recorded and promotion works
+    assert any(e.kind == "merge_approved" for e in events)
+    app.promote_round(created.round_id)
+    assert (tmp_path / "produced.txt").exists()

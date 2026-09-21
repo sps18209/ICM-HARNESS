@@ -24,11 +24,13 @@ import contextlib
 import json
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from icm_harness.intake import IntakeChoice, IntakeQuestion, IntakeResult
 from icm_harness.kernel.contracts import TaskIntent
+from icm_harness.policies import ActionRequest, ApprovalClass, classify
 
 MAX_QUESTIONS = 4
 ASK_THRESHOLD = 0.75  # certainty below this earns the field a clarifying question
@@ -230,6 +232,203 @@ def build_intake_result(
     # Jev cannot restate the objective in prose; the user's wording stands.
     return IntakeResult(
         restated_objective="", profile_draft=draft, questions=tuple(questions)
+    )
+
+
+# --- semantic stage gate & pre-promotion review (integration points 2 & 3) ---
+#
+# Both are ADVISORY: they grade, they never pass or fail anything. The caller
+# records the verdicts as events; per ADR-0010 a red flag may only ever RAISE
+# the scrutiny a change gets, never lower it.
+
+_CLIP_NOTICE = "\n…[truncated for review]"
+
+
+def _clip(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + _CLIP_NOTICE
+
+
+_QUALITY_RUBRIC = [
+    "Unusable, empty, or off-task",
+    "Adequate for the stage's role",
+    "Excellent: complete, specific, and self-supporting",
+]
+
+_STAGE_GATE_QUESTIONS: dict[str, dict[str, Any]] = {
+    "addresses_objective": {
+        "type": "noul",
+        "instructions": "These stage outputs substantively address the stated objective",
+    },
+    "claims_verified": {
+        "type": "noul",
+        "instructions": (
+            "Where the outputs claim something was tested or verified, they show "
+            "the actual evidence rather than merely asserting it"
+        ),
+    },
+    "quality": {
+        "type": "score",
+        "instructions": "Overall quality of these outputs for their stage role",
+        "criteria": list(_QUALITY_RUBRIC),
+    },
+}
+
+
+@dataclass(frozen=True, slots=True)
+class StageReview:
+    """Calibrated grading of one stage's outputs. Probabilities, not verdicts."""
+
+    addresses_objective: float
+    claims_verified: float
+    quality: float
+
+    def concerns(self, threshold: float = 0.5) -> tuple[str, ...]:
+        out = []
+        if self.addresses_objective < threshold:
+            out.append("outputs may not address the objective")
+        if self.claims_verified < threshold:
+            out.append("verification claims may be unsubstantiated")
+        if self.quality < threshold:
+            out.append("output quality graded low")
+        return tuple(out)
+
+    def as_payload(self) -> dict[str, float]:
+        return {
+            "addresses_objective": self.addresses_objective,
+            "claims_verified": self.claims_verified,
+            "quality": self.quality,
+        }
+
+
+def review_stage_outputs(
+    objective: str,
+    stage_ref: str,
+    outputs: Mapping[str, str],
+    *,
+    client: Any | None = None,
+    per_output_chars: int = 8_000,
+    total_chars: int = 28_000,
+) -> StageReview:
+    """Grade a passing stage's artifacts against the objective (point 2)."""
+    parts = [
+        f"The round's objective:\n{objective}",
+        f"The stage that produced these outputs: {stage_ref}",
+    ]
+    remaining = total_chars
+    for name, content in outputs.items():
+        chunk = _clip(str(content), min(per_output_chars, max(0, remaining)))
+        remaining -= len(chunk)
+        parts.append(f"--- output: {name} ---\n{chunk}")
+        if remaining <= 0:
+            break
+    answers = (client or SystemOneIntakeClient()).system_one(
+        state="\n\n".join(parts), questions=dict(_STAGE_GATE_QUESTIONS)
+    )
+
+    def noul(name: str) -> float:
+        return min(1.0, max(0.0, float(_answer(answers, name, "noul", 0.5) or 0.0)))
+
+    span = max(1, len(_QUALITY_RUBRIC) - 1)
+    quality = min(1.0, max(0.0, float(_answer(answers, "quality", "score", 0.0) or 0.0) / span))
+    return StageReview(
+        addresses_objective=noul("addresses_objective"),
+        claims_verified=noul("claims_verified"),
+        quality=quality,
+    )
+
+
+_DIFF_REVIEW_QUESTIONS: dict[str, dict[str, Any]] = {
+    "consistent_with_objective": {
+        "type": "noul",
+        "instructions": "The changes in this diff are consistent with the stated objective",
+    },
+    "touches_production_config": {
+        "type": "noul",
+        "instructions": (
+            "The diff changes production, deployment, or shared-infrastructure "
+            "configuration (CI pipelines, deploy manifests, live service settings)"
+        ),
+    },
+    "removes_tests": {
+        "type": "noul",
+        "instructions": "The diff deletes, skips, or disables existing tests",
+    },
+    "exposes_secrets": {
+        "type": "noul",
+        "instructions": "The diff adds credentials, API keys, tokens, or other secrets",
+    },
+}
+
+
+@dataclass(frozen=True, slots=True)
+class DiffReview:
+    """Calibrated red-flag sweep of a round's diff before merge approval."""
+
+    consistent_with_objective: float
+    touches_production_config: float
+    removes_tests: float
+    exposes_secrets: float
+
+    def concerns(self, threshold: float = 0.5) -> tuple[str, ...]:
+        out = []
+        if self.consistent_with_objective < threshold:
+            out.append("diff may not match the round's objective")
+        if self.touches_production_config >= threshold:
+            out.append("diff appears to touch production or deployment configuration")
+        if self.removes_tests >= threshold:
+            out.append("diff appears to delete or disable tests")
+        if self.exposes_secrets >= threshold:
+            out.append("diff appears to add credentials or secrets")
+        return tuple(out)
+
+    def suggested_approval_class(self, threshold: float = 0.5) -> ApprovalClass:
+        """Map the red flags onto the ADR-0010 taxonomy. This is a floor, not a
+        verdict: callers may only ever escalate beyond it, never relax below
+        their own classification."""
+        request = ActionRequest(
+            summary="round promotion diff",
+            changes_approved_scope=self.consistent_with_objective < threshold,
+            touches_external_surface=self.touches_production_config >= threshold,
+            is_destructive=self.removes_tests >= threshold,
+            is_security_sensitive=self.exposes_secrets >= threshold,
+        )
+        return classify(request)
+
+    def as_payload(self) -> dict[str, float]:
+        return {
+            "consistent_with_objective": self.consistent_with_objective,
+            "touches_production_config": self.touches_production_config,
+            "removes_tests": self.removes_tests,
+            "exposes_secrets": self.exposes_secrets,
+        }
+
+
+def review_diff(
+    objective: str,
+    diff: str,
+    *,
+    client: Any | None = None,
+    max_chars: int = 30_000,
+) -> DiffReview:
+    """Sweep a round's diff for red flags before merge approval (point 3)."""
+    state = (
+        f"The round's objective:\n{objective}\n\n"
+        f"The diff awaiting merge approval:\n{_clip(diff, max_chars)}"
+    )
+    answers = (client or SystemOneIntakeClient()).system_one(
+        state=state, questions=dict(_DIFF_REVIEW_QUESTIONS)
+    )
+
+    def noul(name: str, default: float) -> float:
+        return min(1.0, max(0.0, float(_answer(answers, name, "noul", default) or 0.0)))
+
+    return DiffReview(
+        consistent_with_objective=noul("consistent_with_objective", 1.0),
+        touches_production_config=noul("touches_production_config", 0.0),
+        removes_tests=noul("removes_tests", 0.0),
+        exposes_secrets=noul("exposes_secrets", 0.0),
     )
 
 
