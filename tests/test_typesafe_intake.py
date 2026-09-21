@@ -11,6 +11,7 @@ from icm_harness.integrations.typesafe import (
     build_intake_result,
     build_questions,
     propose_intake,
+    resolve_api_key,
 )
 from icm_harness.kernel.contracts import TaskIntent
 from icm_harness.kernel.errors import IntegrationUnavailable
@@ -188,11 +189,32 @@ def test_dict_shaped_answers_are_accepted():
 # --- setup guardrails --------------------------------------------------------
 
 
-def test_default_client_requires_sdk_or_key():
-    # typesafe-sdk is not installed in the test environment, and even when it
-    # is, a missing TYPESAFE_API_KEY must fail closed with the install hint.
+def test_default_client_requires_sdk_or_key(monkeypatch, tmp_path):
+    # Whether or not typesafe-sdk is installed, a missing TYPESAFE_API_KEY
+    # (no env var, no ./.env) must fail closed with a setup hint.
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
     with pytest.raises(IntegrationUnavailable):
         SystemOneIntakeClient()
+
+
+def test_resolve_api_key_prefers_env_then_dotenv(monkeypatch, tmp_path):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    assert resolve_api_key(tmp_path) is None
+
+    (tmp_path / ".env").write_text(
+        "PORTKEY_API_KEY=other\nTYPESAFE_API_KEY = 'ts_from_file'\n"
+    )
+    assert resolve_api_key(tmp_path) == "ts_from_file"
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts_from_env")
+    assert resolve_api_key(tmp_path) == "ts_from_env"
+
+
+def test_resolve_api_key_ignores_blank_value(monkeypatch, tmp_path):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    (tmp_path / ".env").write_text("TYPESAFE_API_KEY=\n")  # the template line
+    assert resolve_api_key(tmp_path) is None
 
 
 def test_intake_config_defaults_and_validation(tmp_path):

@@ -4,6 +4,7 @@ from icm_harness.integrations.typesafe.adapter import (
     build_questions,
     fold_answers,
     propose_intake,
+    resolve_api_key,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "build_questions",
     "fold_answers",
     "propose_intake",
+    "resolve_api_key",
 ]

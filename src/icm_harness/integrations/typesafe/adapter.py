@@ -24,6 +24,7 @@ import contextlib
 import json
 import os
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from icm_harness.intake import IntakeChoice, IntakeQuestion, IntakeResult
@@ -232,6 +233,24 @@ def build_intake_result(
     )
 
 
+def resolve_api_key(root: str | Path = ".") -> str | None:
+    """TYPESAFE_API_KEY from the environment, else from `root`/.env — the
+    gitignored file that `.env.example` templates. The environment wins so
+    deployments stay twelve-factor; the file is the local convenience."""
+    key = os.environ.get("TYPESAFE_API_KEY")
+    if key:
+        return key
+    try:
+        lines = (Path(root) / ".env").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        name, sep, value = line.strip().partition("=")
+        if sep and name.strip() == "TYPESAFE_API_KEY":
+            return value.strip().strip("'\"") or None
+    return None
+
+
 class SystemOneIntakeClient:
     """Thin client over typesafe-sdk: converts the plain-dict question spec
     into SDK question objects and returns the response's answers mapping."""
@@ -245,14 +264,16 @@ class SystemOneIntakeClient:
             raise IntegrationUnavailable(
                 "Install extras: pip install 'icm-production-harness[systemone]'"
             ) from exc
-        if not os.environ.get("TYPESAFE_API_KEY"):
+        key = resolve_api_key()
+        if not key:
             from icm_harness.kernel.errors import IntegrationUnavailable
 
             raise IntegrationUnavailable(
-                "Set TYPESAFE_API_KEY (create one at console.typesafe.ai/keys)"
+                "Set TYPESAFE_API_KEY in the environment or in ./.env "
+                "(create one at console.typesafe.ai/keys)"
             )
         self._choice, self._score, self._noul = Choice, Score, Noul
-        self._client = TypeSafeClient()
+        self._client = TypeSafeClient(api_key=key)
 
     def system_one(self, *, state: str, questions: Mapping[str, Mapping[str, Any]]):
         converted: dict[str, Any] = {}
