@@ -1,13 +1,45 @@
 # Integration analysis: TypeSafe Jev (System One model)
 
 Status: Points 1–3 implemented in
-`src/icm_harness/integrations/typesafe/adapter.py`, each opt-in with
-`TYPESAFE_API_KEY` set and the `systemone` extras installed: intake via
-`[intake] profiler = "typesafe"`; the semantic stage gate and the
-pre-promotion diff review via `[evaluation] semantic_gate` /
-`promotion_review = "typesafe"` (both advisory — recorded as
-`semantic_gate` / `promotion_reviewed` events, never able to pass a
-stage or approve a merge). Point 4 (context ranking) remains proposed.
+`src/icm_harness/integrations/typesafe/adapter.py`; point 4 (context
+ranking) remains proposed.
+
+## Setting it up
+
+Install the extras and put the key in one of three places — the
+environment, the project's gitignored `.env`, or `~/.icm/env` (checked in
+that order, so one per-user file serves every project on the machine):
+
+```bash
+pip install 'icm-production-harness[systemone]'
+mkdir -p ~/.icm && echo 'TYPESAFE_API_KEY=…' > ~/.icm/env
+```
+
+Then opt a project in. `icm init` asks once ("Found a TypeSafe key — use
+Jev to profile requests in this project?") when a key is discoverable, the
+SDK is installed, and a terminal is there to answer; `icm init --typesafe`
+skips the question for scripts and CI. Enabling is never automatic:
+profiling sends the objective's text to an external API, so a person says
+yes. `icm doctor` reports where the key was found, whether the SDK is
+installed, and which features the project has enabled.
+
+The config it writes (editable by hand):
+
+```toml
+[intake]
+profiler = "typesafe"       # point 1: Jev profiles the request
+ask_threshold = 0.75        # only ask about fields below this confidence
+
+[evaluation]
+semantic_gate = "typesafe"    # point 2: grade each passing stage's outputs
+promotion_review = "typesafe" # point 3: sweep the diff before merge approval
+```
+
+Both evaluation reviews are advisory — recorded as `semantic_gate` /
+`promotion_reviewed` events, never able to pass a stage or approve a
+merge. Every feature falls back silently (intake to the `claude-cli`
+path, the reviews to an `*_unavailable` event) when the key, the SDK, or
+the API is missing.
 
 ## What Jev is
 

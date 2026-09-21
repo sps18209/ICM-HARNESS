@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib.util
 import json
 import os
 import shutil
@@ -92,7 +93,57 @@ def cmd_init(args) -> int:
     print(f"engine=.icm/ENGINE.md ({engine}); CLAUDE.md pointer ({pointer})")
     if preserved:
         print("preserved (existing files, not overwritten): " + ", ".join(preserved))
+    _offer_typesafe_intake(target, explicit=bool(getattr(args, "typesafe", False)))
     return 0
+
+
+def _typesafe_ready(target: Path) -> tuple[str | None, bool]:
+    """(where the key was found or None, whether typesafe-sdk is installed)."""
+    from icm_harness.integrations.typesafe import api_key_source
+
+    found = api_key_source(target)
+    sdk = importlib.util.find_spec("typesafe_sdk") is not None
+    return (found[1] if found else None, sdk)
+
+
+def _offer_typesafe_intake(target: Path, *, explicit: bool) -> None:
+    """Opt into Jev intake profiling during init.
+
+    `--typesafe` enables it outright. Otherwise, ask one plain question — but
+    only when it could actually work (a key is discoverable and the SDK is
+    installed) and someone is at a terminal to answer. Never silent: enabling
+    sends each objective's text to an external API, so a person says yes."""
+    config_path = target / ".harness/config.toml"
+    text = config_path.read_text(encoding="utf-8")
+    if 'profiler = "typesafe"' in text:
+        return  # already enabled
+    key_source, sdk = _typesafe_ready(target)
+    if not explicit:
+        if key_source is None or not sdk:
+            return
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return
+        try:
+            raw = input(
+                f"Found a TypeSafe key ({key_source}) — use Jev to profile "
+                "requests in this project? [Y/n] "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if raw not in ("", "y", "yes"):
+            return
+    if 'profiler = "claude-cli"' not in text:
+        print('intake: set profiler = "typesafe" under [intake] in .harness/config.toml manually')
+        return
+    config_path.write_text(
+        text.replace('profiler = "claude-cli"', 'profiler = "typesafe"', 1), encoding="utf-8"
+    )
+    note = ""
+    if key_source is None:
+        note = " (no TYPESAFE_API_KEY found yet — add one to ~/.icm/env or ./.env)"
+    elif not sdk:
+        note = " (typesafe-sdk not installed — pip install 'icm-production-harness[systemone]')"
+    print(f"intake=typesafe (Jev profiles requests; falls back to claude-cli){note}")
 
 
 def _profile_from_args(args) -> TaskProfile:
@@ -421,6 +472,26 @@ def cmd_doctor(args) -> int:
         checks.append(("agent", executable is not None, executable or config.agent.executable))
         if config.workspace.strategy == "worktree":
             checks.append(("git-repository", _git_repository(root), str(root)))
+    if config:
+        key_source, sdk = _typesafe_ready(root)
+        uses = [
+            name
+            for name, value in (
+                ("intake", config.intake.profiler),
+                ("semantic_gate", config.evaluation.semantic_gate),
+                ("promotion_review", config.evaluation.promotion_review),
+            )
+            if value == "typesafe"
+        ]
+        key_note = f"key={key_source or 'not found'}"
+        sdk_note = f"sdk={'installed' if sdk else 'missing'}"
+        if uses:
+            # Configured to use Jev, so a missing key/SDK is a real problem —
+            # runs would silently fall back on every call.
+            detail = f"{', '.join(uses)}; {key_note}, {sdk_note}"
+            checks.append(("typesafe", key_source is not None and sdk, detail))
+        else:
+            print(f"typesafe: optional (not enabled; {key_note}, {sdk_note})")
     # Optional niceties for the shell helpers (do not fail the overall check).
     fzf = shutil.which("fzf")
     print(f"fzf: {'OK' if fzf else 'optional'} ({fzf or 'install for icm-pick'})")
@@ -619,6 +690,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="overwrite existing workspace files (default: never overwrite)",
+    )
+    init.add_argument(
+        "--typesafe",
+        action="store_true",
+        help="profile requests through TypeSafe Jev (otherwise init asks when a key is found)",
     )
     init.set_defaults(func=cmd_init)
 

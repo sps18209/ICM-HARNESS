@@ -54,3 +54,52 @@ def test_force_overwrites_existing_files(tmp_path):
     # The shipped template AGENTS.md replaced the user's file under --force.
     assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") != "MY AGENTS RULES\n"
     assert "CONTEXT.md" in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+
+
+def test_init_typesafe_flag_enables_jev_intake(tmp_path, capsys):
+    assert main(["init", str(tmp_path), "--typesafe"]) == 0
+    config = (tmp_path / ".harness/config.toml").read_text(encoding="utf-8")
+    assert 'profiler = "typesafe"' in config
+    assert 'profiler = "claude-cli"' not in config
+    assert "intake=typesafe" in capsys.readouterr().out
+
+
+def test_init_typesafe_flag_is_idempotent(tmp_path):
+    assert main(["init", str(tmp_path), "--typesafe"]) == 0
+    assert main(["init", str(tmp_path), "--typesafe"]) == 0
+    config = (tmp_path / ".harness/config.toml").read_text(encoding="utf-8")
+    assert config.count('profiler = "typesafe"') == 1
+
+
+def test_init_does_not_prompt_or_enable_without_a_terminal(tmp_path, monkeypatch):
+    # Even with a discoverable key, non-interactive init must not opt in.
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts_test")
+    assert main(["init", str(tmp_path)]) == 0
+    config = (tmp_path / ".harness/config.toml").read_text(encoding="utf-8")
+    assert 'profiler = "claude-cli"' in config
+
+
+def test_init_prompt_enables_on_yes(tmp_path, monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts_test")
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    monkeypatch.setattr(
+        "icm_harness.cli.app.importlib.util.find_spec", lambda name: object()
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: "")
+    assert main(["init", str(tmp_path)]) == 0
+    config = (tmp_path / ".harness/config.toml").read_text(encoding="utf-8")
+    assert 'profiler = "typesafe"' in config
+
+
+def test_init_prompt_respects_no(tmp_path, monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts_test")
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    monkeypatch.setattr(
+        "icm_harness.cli.app.importlib.util.find_spec", lambda name: object()
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    assert main(["init", str(tmp_path)]) == 0
+    config = (tmp_path / ".harness/config.toml").read_text(encoding="utf-8")
+    assert 'profiler = "claude-cli"' in config

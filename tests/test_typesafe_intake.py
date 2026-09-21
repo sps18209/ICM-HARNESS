@@ -17,6 +17,17 @@ from icm_harness.kernel.contracts import TaskIntent
 from icm_harness.kernel.errors import IntegrationUnavailable
 
 
+@pytest.fixture(autouse=True)
+def _isolated_global_env(monkeypatch, tmp_path_factory):
+    """Point the per-user key file somewhere empty so a developer's real
+    ~/.icm/env can never change what these tests observe."""
+    from icm_harness.integrations.typesafe import adapter
+
+    monkeypatch.setattr(
+        adapter, "GLOBAL_ENV_PATH", tmp_path_factory.mktemp("icm-home") / "env"
+    )
+
+
 def _choice(choice: str, confidence: float):
     return SimpleNamespace(choice=choice, confidence=confidence)
 
@@ -328,3 +339,24 @@ def test_review_diff_missing_answers_default_benign():
 
     review = review_diff("objective", "diff", client=FakeClient({}))
     assert review.concerns() == ()
+
+
+def test_api_key_source_order_env_project_then_global(monkeypatch, tmp_path):
+    from icm_harness.integrations.typesafe import adapter, api_key_source
+
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    global_env = tmp_path / "home-icm-env"
+    monkeypatch.setattr(adapter, "GLOBAL_ENV_PATH", global_env)
+    project = tmp_path / "project"
+    project.mkdir()
+
+    assert api_key_source(project) is None
+
+    global_env.write_text("TYPESAFE_API_KEY=ts_global\n")
+    assert api_key_source(project) == ("ts_global", "~/.icm/env")
+
+    (project / ".env").write_text("TYPESAFE_API_KEY=ts_project\n")
+    assert api_key_source(project) == ("ts_project", "./.env")
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts_env")
+    assert api_key_source(project) == ("ts_env", "environment")
