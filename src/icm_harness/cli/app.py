@@ -156,27 +156,48 @@ def _resolve_profile(args) -> TaskProfile | None:
     root = _root()
     config = load_config(root)
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    use_typesafe = config.intake.profiler == "typesafe"
+    cli_intake_ok = (
+        config.agent.provider == "claude-cli"
+        and shutil.which(config.agent.executable) is not None
+    )
     applicable = (
         not getattr(args, "no_intake", False)
         and not _profile_flags_present(sys.argv)
         and not getattr(args, "dry_run", False)
-        and config.agent.provider == "claude-cli"
-        and shutil.which(config.agent.executable) is not None
+        and (use_typesafe or cli_intake_ok)
         and interactive
     )
     if not applicable:
         return _profile_from_args(args)
 
-    try:
-        result = intake.propose(
-            args.objective,
-            env_facts=_env_facts(root),
-            executable=config.agent.executable,
-            model=None,
-        )
-    except Exception as exc:  # noqa: BLE001 — intake is an assist, never a gate
-        print(f"(couldn't shape that automatically — {exc}; using defaults)", file=sys.stderr)
-        return _profile_from_args(args)
+    result = None
+    if use_typesafe:
+        try:
+            from icm_harness.integrations.typesafe import propose_intake
+
+            result = propose_intake(
+                args.objective,
+                env_facts=_env_facts(root),
+                ask_threshold=config.intake.ask_threshold,
+            )
+        except Exception as exc:  # noqa: BLE001 — the adapter is opt-in, never a gate
+            print(f"(typesafe intake unavailable — {exc}; falling back)", file=sys.stderr)
+    if result is None:
+        if not cli_intake_ok:
+            return _profile_from_args(args)
+        try:
+            result = intake.propose(
+                args.objective,
+                env_facts=_env_facts(root),
+                executable=config.agent.executable,
+                model=None,
+            )
+        except Exception as exc:  # noqa: BLE001 — intake is an assist, never a gate
+            print(
+                f"(couldn't shape that automatically — {exc}; using defaults)", file=sys.stderr
+            )
+            return _profile_from_args(args)
 
     if getattr(args, "yes", False):
         answers = [q.recommended for q in result.questions]

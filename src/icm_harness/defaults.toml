@@ -29,6 +29,13 @@ host = "127.0.0.1"
 port = 8765
 poll_interval_ms = 1500
 
+[intake]
+# "claude-cli" (default) runs intake through the local claude binary.
+# "typesafe" profiles the request through TypeSafe's Jev System One API
+# (needs `pip install 'icm-production-harness[systemone]'` and TYPESAFE_API_KEY).
+profiler = "claude-cli"
+ask_threshold = 0.75
+
 [models.default]
 provider = "claude-cli"
 family = "claude"

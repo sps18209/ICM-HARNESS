@@ -15,7 +15,7 @@ Preferred replaceable integrations:
 - modelcontextprotocol/python-sdk
 - microsoft/LLMLingua
 
-Under evaluation (see [typesafe-jev.md](typesafe-jev.md)):
-- typesafe-ai (Jev / System One API, `typesafe-sdk`)
+- typesafe-ai (Jev / System One API, `typesafe-sdk` — intake profiler;
+  see [typesafe-jev.md](typesafe-jev.md))
 
 Pin and review versions/licenses before production deployment.
