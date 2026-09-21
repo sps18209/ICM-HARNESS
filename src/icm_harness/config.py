@@ -46,6 +46,12 @@ class AgentConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class IntakeConfig:
+    profiler: str = "claude-cli"  # or "typesafe" (opt-in; sends the objective to an external API)
+    ask_threshold: float = 0.75
+
+
+@dataclass(frozen=True, slots=True)
 class WorkspaceConfig:
     strategy: str = "worktree"
     worktree_root: str = ".harness/worktrees"
@@ -82,6 +88,7 @@ class HarnessConfig:
     web: WebConfig = WebConfig()
     models: tuple[ModelConfig, ...] = field(default_factory=tuple)
     stage_budgets: Mapping[str, int] = field(default_factory=dict)
+    intake: IntakeConfig = IntakeConfig()
 
 
 def _table(data: Mapping[str, Any], name: str) -> Mapping[str, Any]:
@@ -143,6 +150,13 @@ def load_config(root: str | Path, *, environ: Mapping[str, str] | None = None) -
         raise ValueError("workspace.strategy must be 'worktree' or 'in_place'")
     web = WebConfig(**_known(WebConfig, _table(data, "web")))
 
+    intake_data = _known(IntakeConfig, _table(data, "intake"))
+    if env.get("ICM_INTAKE_PROFILER"):
+        intake_data["profiler"] = env["ICM_INTAKE_PROFILER"]
+    intake = IntakeConfig(**intake_data)
+    if intake.profiler not in {"claude-cli", "typesafe"}:
+        raise ValueError("intake.profiler must be 'claude-cli' or 'typesafe'")
+
     model_configs = []
     for name, values in _table(data, "models").items():
         if not isinstance(values, Mapping):
@@ -155,5 +169,5 @@ def load_config(root: str | Path, *, environ: Mapping[str, str] | None = None) -
     budget_values = _table(data, "stage_budgets")
     stage_budgets = {str(key): int(value) for key, value in budget_values.items()}
     return HarnessConfig(
-        runtime, context, agent, workspace, web, tuple(model_configs), stage_budgets
+        runtime, context, agent, workspace, web, tuple(model_configs), stage_budgets, intake
     )

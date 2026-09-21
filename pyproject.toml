@@ -19,6 +19,7 @@ Issues = "https://github.com/sps18209/ICM-HARNESS/issues"
 [project.optional-dependencies]
 ai = ["pydantic>=2.7", "pydantic-ai>=1.0", "pydantic-ai-harness>=0.1"]
 ml = ["river>=0.22"]
+systemone = ["typesafe-sdk>=0.7,<1"]
 dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]

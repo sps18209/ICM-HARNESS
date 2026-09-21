@@ -1,6 +1,9 @@
 # Integration analysis: TypeSafe Jev (System One model)
 
-Status: Proposed (analysis only — no adapter is implemented yet)
+Status: Point 1 (intake profiling) implemented — adapter at
+`src/icm_harness/integrations/typesafe/adapter.py`, opt-in via
+`[intake] profiler = "typesafe"` with `TYPESAFE_API_KEY` set and the
+`systemone` extras installed. Points 2–4 remain proposed.
 
 ## What Jev is
 
