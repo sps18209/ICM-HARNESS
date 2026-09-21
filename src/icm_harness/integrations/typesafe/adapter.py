@@ -432,15 +432,12 @@ def review_diff(
     )
 
 
-def resolve_api_key(root: str | Path = ".") -> str | None:
-    """TYPESAFE_API_KEY from the environment, else from `root`/.env — the
-    gitignored file that `.env.example` templates. The environment wins so
-    deployments stay twelve-factor; the file is the local convenience."""
-    key = os.environ.get("TYPESAFE_API_KEY")
-    if key:
-        return key
+GLOBAL_ENV_PATH = Path.home() / ".icm/env"
+
+
+def _key_from_file(path: Path) -> str | None:
     try:
-        lines = (Path(root) / ".env").read_text(encoding="utf-8").splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
     for line in lines:
@@ -448,6 +445,30 @@ def resolve_api_key(root: str | Path = ".") -> str | None:
         if sep and name.strip() == "TYPESAFE_API_KEY":
             return value.strip().strip("'\"") or None
     return None
+
+
+def api_key_source(root: str | Path = ".") -> tuple[str, str] | None:
+    """(key, where) for the first TYPESAFE_API_KEY found, or None.
+
+    Lookup order: the environment (so deployments stay twelve-factor), the
+    project's gitignored `.env` (the file `.env.example` templates), then the
+    per-user `~/.icm/env` so one file serves every project on the machine."""
+    key = os.environ.get("TYPESAFE_API_KEY")
+    if key:
+        return key, "environment"
+    key = _key_from_file(Path(root) / ".env")
+    if key:
+        return key, "./.env"
+    key = _key_from_file(GLOBAL_ENV_PATH)
+    if key:
+        return key, "~/.icm/env"
+    return None
+
+
+def resolve_api_key(root: str | Path = ".") -> str | None:
+    """The TYPESAFE_API_KEY to use, or None (see :func:`api_key_source`)."""
+    found = api_key_source(root)
+    return found[0] if found else None
 
 
 class SystemOneIntakeClient:
