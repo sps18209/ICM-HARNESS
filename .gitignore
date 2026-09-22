@@ -9,6 +9,13 @@ build/
 *.egg-info/
 .harness/runtime/
 .harness/worktrees/
+# Per-round working state written by the engine when the harness repo is
+# itself the workspace. Round artifacts and the CURRENT pointer are
+# machine-local execution state, like runtime/ and worktrees/ above — a
+# round would otherwise dirty the tree on every run. Root-anchored so the
+# tracked workspace_template/2_Working_State/ copy is unaffected.
+.harness/rounds/
+/2_Working_State/
 
 # node / vscode extension build outputs (any location)
 node_modules/
