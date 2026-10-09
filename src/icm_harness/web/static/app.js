@@ -260,17 +260,75 @@ function renderTextArtifact(container, content, name) {
   flushCode();
 }
 
+// Guided-intake state for the new-round dialog. `phase` is one of:
+//   "objective" — collecting the plain-English request (next submit proposes)
+//   "questions" — a proposal is on screen (next submit creates the round)
+//   "manual"    — intake unavailable or the operator opened Advanced (fields win)
+const intake = { phase: "objective", proposal: null, answers: [] };
+
+function resetIntake() {
+  intake.phase = "objective";
+  intake.proposal = null;
+  intake.answers = [];
+  $("intake-panel").hidden = true;
+  $("intake-questions").replaceChildren();
+  $("intake-plan").textContent = "";
+  $("advanced-options").open = false;
+  $("intake-back-button").hidden = true;
+  $("new-round-submit").textContent = "Continue";
+}
+
 function openNewDialog() {
   $("form-error").textContent = "";
+  $("new-round-form").reset();
+  resetIntake();
   $("new-round-dialog").showModal();
   $("new-round-form").elements.objective.focus();
 }
 
-async function submitNewRound(event) {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const data = new FormData(form);
-  const payload = {
+function renderIntakeQuestions(proposal) {
+  const plan = $("intake-plan");
+  plan.textContent = proposal.restated_objective
+    ? `Here's the plan: ${proposal.restated_objective}`
+    : "";
+  const container = $("intake-questions");
+  container.replaceChildren();
+  intake.answers = proposal.questions.map((q) => q.recommended || 0);
+  proposal.questions.forEach((question, qIndex) => {
+    const choices = node("div", { className: "intake-choices" });
+    question.choices.forEach((choice, cIndex) => {
+      const selected = cIndex === intake.answers[qIndex];
+      const button = node("button", {
+        className: `intake-choice${selected ? " selected" : ""}`,
+        type: "button",
+        attrs: { "aria-pressed": selected ? "true" : "false" },
+      }, [node("span", { text: choice.label })]);
+      if (cIndex === question.recommended) {
+        button.append(node("span", { className: "intake-suggested", text: "Suggested" }));
+      }
+      button.addEventListener("click", () => {
+        intake.answers[qIndex] = cIndex;
+        for (const sibling of choices.children) {
+          const on = sibling === button;
+          sibling.classList.toggle("selected", on);
+          sibling.setAttribute("aria-pressed", on ? "true" : "false");
+        }
+      });
+      choices.append(button);
+    });
+    container.append(node("fieldset", { className: "intake-question" }, [
+      node("legend", { text: `${qIndex + 1}. ${question.prompt}` }),
+      choices,
+    ]));
+  });
+  if (!proposal.questions.length) {
+    container.append(node("p", { className: "muted", text: "No questions needed — ready to run." }));
+  }
+  $("intake-panel").hidden = false;
+}
+
+function manualPayload(data) {
+  return {
     objective: data.get("objective"),
     intent: data.get("intent"),
     clarity: Number(data.get("clarity")),
@@ -281,19 +339,84 @@ async function submitNewRound(event) {
     dry_run: data.get("dry_run") === "on",
     run: true,
   };
-  const submit = form.querySelector("button[type=submit]");
+}
+
+async function createRound(payload, form) {
+  const round = await api("/api/rounds", { method: "POST", body: JSON.stringify(payload) });
+  state.selectedId = round.round_id;
+  form.reset();
+  resetIntake();
+  $("new-round-dialog").close();
+  await refreshRounds();
+}
+
+async function submitNewRound(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const objective = String(data.get("objective") || "").trim();
+  const submit = $("new-round-submit");
   submit.disabled = true;
+  $("form-error").textContent = "";
   try {
-    const round = await api("/api/rounds", { method: "POST", body: JSON.stringify(payload) });
-    state.selectedId = round.round_id;
-    form.reset();
-    $("new-round-dialog").close();
-    await refreshRounds();
+    // The operator took the wheel: Advanced open, or intake already fell back.
+    if ($("advanced-options").open || intake.phase === "manual") {
+      await createRound(manualPayload(data), form);
+      return;
+    }
+    if (intake.phase === "questions" && intake.proposal) {
+      await createRound({
+        objective,
+        intake: intake.proposal,
+        answers: intake.answers,
+        dry_run: data.get("dry_run") === "on",
+        run: true,
+      }, form);
+      return;
+    }
+    // phase "objective": shape the request with a short guided conversation.
+    if (!objective) { $("form-error").textContent = "Describe what you want done."; return; }
+    submit.textContent = "Thinking…";
+    const result = await api("/api/intake/propose", {
+      method: "POST",
+      body: JSON.stringify({ objective }),
+    });
+    if (!result.applicable) {
+      $("advanced-options").open = true;
+      intake.phase = "manual";
+      submit.textContent = "Create and run";
+      toast(result.reason || "Set the signals below, then create the round.");
+      return;
+    }
+    intake.proposal = result.proposal;
+    intake.phase = "questions";
+    renderIntakeQuestions(result.proposal);
+    $("intake-back-button").hidden = false;
+    submit.textContent = "Create and run";
   } catch (error) {
     $("form-error").textContent = error.message;
+    if (intake.phase === "objective") submit.textContent = "Continue";
   } finally {
     submit.disabled = false;
   }
+}
+
+function intakeBack() {
+  // Return to the objective so it can be edited and re-shaped.
+  intake.phase = "objective";
+  intake.proposal = null;
+  intake.answers = [];
+  $("intake-panel").hidden = true;
+  $("intake-questions").replaceChildren();
+  $("intake-plan").textContent = "";
+  $("intake-back-button").hidden = true;
+  $("new-round-submit").textContent = "Continue";
+  $("new-round-form").elements.objective.focus();
+}
+
+function onObjectiveEdited() {
+  // Editing the request after it was shaped invalidates the proposal.
+  if (intake.phase === "questions") intakeBack();
 }
 
 function bind() {
@@ -304,6 +427,8 @@ function bind() {
   $("cancel-dialog-button").addEventListener("click", () => $("new-round-dialog").close());
   $("close-artifact-button").addEventListener("click", () => $("artifact-dialog").close());
   $("new-round-form").addEventListener("submit", submitNewRound);
+  $("intake-back-button").addEventListener("click", intakeBack);
+  $("new-round-form").elements.objective.addEventListener("input", onObjectiveEdited);
 }
 
 bind();

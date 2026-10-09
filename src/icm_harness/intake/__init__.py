@@ -17,6 +17,9 @@ from typing import Any
 _PUBLIC: dict[str, str] = {
     "propose": "agent",
     "finalize": "agent",
+    "finalize_from_payload": "agent",
+    "result_to_payload": "agent",
+    "env_facts": "agent",
     "MAX_QUESTIONS": "agent",
     "IntakeResult": "contracts",
     "IntakeQuestion": "contracts",

@@ -271,8 +271,9 @@ turning words into the signals it already consumes.
 
 - **Phase 1 (first build slice):** the `intake/` module, the CLI guided chat,
   escape hatches, fallback, hermetic + golden tests. CLI only.
-- **Phase 2:** surface the same intake in the web operator console (a chat
-  panel) and, optionally, feed the Context Wiki into inference.
+- **Phase 2 (built):** surface the same intake in the web operator console as a
+  guided-chat panel on the New-round flow. Feeding the Context Wiki into
+  inference is deferred (still just the shallow `env_facts` signals).
 - **Phase 3:** the live intake-accuracy eval set + shortcut-key bindings for the
   question picker.
 
@@ -286,3 +287,21 @@ turning words into the signals it already consumes.
 - Non-interactive and error paths never hang and never hard-fail on intake.
 - `ruff`, the full suite, and both architecture/layout validators stay green;
   `intake` is registered in the module map and the validators.
+
+## 10. Definition of done (Phase 2)
+
+- The New-round dialog leads with "What do you want done?" in plain words; on
+  submit it calls `POST /api/intake/propose`, then renders the restated plan and
+  the ≤4 questions as clickable choices (the recommended one pre-selected).
+- Creating the round sends the proposal back with the chosen answers; the server
+  rebuilds the profile with the **same deterministic finalizer** the CLI uses
+  (`finalize_from_payload` → `_parse` → `finalize`) — no second model call, and
+  every signal re-clamped, so a tampered client can only nudge bounded signals.
+- Intake is an assist, never a gate: when the claude CLI is absent or the call
+  fails, `/api/intake/propose` returns `applicable: false` (HTTP 200, not 500)
+  and the panel reveals the Advanced fields instead of erroring.
+- The "pro" path is preserved: Advanced discloses the explicit signal fields, and
+  the flag/field create path (used by Advanced and by API clients) is unchanged.
+- `env_facts` is shared by both front-ends (one source of truth in `intake/`).
+- `ruff`, the full suite (incl. `test_web_intake.py`), and both validators stay
+  green.
