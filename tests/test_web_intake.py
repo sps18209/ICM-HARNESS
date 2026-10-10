@@ -88,35 +88,52 @@ def server(tmp_path):
         srv.close()
 
 
-def test_propose_returns_questions_when_cli_available(server, monkeypatch):
-    monkeypatch.setattr(web_server.shutil, "which", lambda _exe: "/usr/bin/claude")
-    monkeypatch.setattr(intake, "propose", lambda objective, **kw: _PROPOSAL)
+def test_propose_returns_questions_and_profiler(server, monkeypatch):
+    # The endpoint routes profiler selection through resolve_intake_proposer; we
+    # fake its result to exercise the endpoint's handling (the resolver itself is
+    # covered by test_intake_resolver.py).
+    monkeypatch.setattr(
+        web_server, "resolve_intake_proposer",
+        lambda *a, **k: ((lambda _obj: _PROPOSAL), "claude-cli"),
+    )
     status, payload = server.post("/api/intake/propose", {"objective": "a running log"})
     assert status == 200
     assert payload["applicable"] is True
+    assert payload["profiler"] == "claude-cli"
     proposal = payload["proposal"]
     assert proposal["restated_objective"] == "Build a small running-log app."
     assert len(proposal["questions"]) == 1
     assert proposal["questions"][0]["choices"][1]["sets"]["stakes"] == 0.8
 
 
-def test_propose_degrades_gracefully_without_cli(server, monkeypatch):
-    # No claude binary on PATH → not a 500, but an honest applicable:false so the
-    # panel can fall back to the manual fields.
-    monkeypatch.setattr(web_server.shutil, "which", lambda _exe: None)
+def test_propose_reports_the_typesafe_profiler(server, monkeypatch):
+    # When Jev is the selected engine, the endpoint surfaces it so the panel can
+    # label the questions (Jev returns no restated objective).
+    monkeypatch.setattr(
+        web_server, "resolve_intake_proposer",
+        lambda *a, **k: ((lambda _obj: _PROPOSAL), "typesafe"),
+    )
+    _, payload = server.post("/api/intake/propose", {"objective": "x"})
+    assert payload["profiler"] == "typesafe"
+
+
+def test_propose_degrades_when_no_profiler_available(server, monkeypatch):
+    # No engine can run → not a 500, but an honest applicable:false so the panel
+    # can fall back to the manual fields.
+    monkeypatch.setattr(web_server, "resolve_intake_proposer", lambda *a, **k: None)
     status, payload = server.post("/api/intake/propose", {"objective": "anything"})
     assert status == 200
     assert payload["applicable"] is False
-    assert "claude" in payload["reason"]
+    assert "fields below" in payload["reason"]
 
 
-def test_propose_degrades_when_model_call_fails(server, monkeypatch):
-    monkeypatch.setattr(web_server.shutil, "which", lambda _exe: "/usr/bin/claude")
-
-    def _boom(objective, **kw):
+def test_propose_degrades_when_the_call_fails(server, monkeypatch):
+    def _boom(_obj):
         raise RuntimeError("transport exploded")
 
-    monkeypatch.setattr(intake, "propose", _boom)
+    monkeypatch.setattr(
+        web_server, "resolve_intake_proposer", lambda *a, **k: (_boom, "claude-cli")
+    )
     status, payload = server.post("/api/intake/propose", {"objective": "anything"})
     assert status == 200
     assert payload["applicable"] is False
