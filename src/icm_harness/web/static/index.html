@@ -108,49 +108,62 @@
         <button id="close-dialog-button" class="quiet" type="button" aria-label="Close">Close</button>
       </div>
       <label>
-        Objective
-        <textarea name="objective" rows="4" required placeholder="Describe the outcome the harness should deliver"></textarea>
+        What do you want done?
+        <textarea name="objective" rows="4" required placeholder="Describe it in plain words — e.g. “build a small app to log my runs”. No code or settings needed."></textarea>
       </label>
-      <div class="form-grid">
-        <label>
-          Intent
-          <select name="intent">
-            <option value="auto">Auto route</option>
-            <option value="build">Build</option>
-            <option value="investigate">Investigate</option>
-            <option value="decide">Decide</option>
-            <option value="review">Review</option>
-            <option value="quick">Quick</option>
-          </select>
+
+      <!-- Guided-chat panel: questions the intake model asks, rendered after the
+           objective is submitted. Hidden until there's a proposal to show. -->
+      <section id="intake-panel" class="intake-panel" aria-live="polite" hidden>
+        <p id="intake-plan" class="intake-plan"></p>
+        <div id="intake-questions" class="intake-questions"></div>
+      </section>
+
+      <details id="advanced-options" class="advanced-options">
+        <summary>Advanced: set the signals myself</summary>
+        <div class="form-grid">
+          <label>
+            Intent
+            <select name="intent">
+              <option value="auto">Auto route</option>
+              <option value="build">Build</option>
+              <option value="investigate">Investigate</option>
+              <option value="decide">Decide</option>
+              <option value="review">Review</option>
+              <option value="quick">Quick</option>
+            </select>
+          </label>
+          <label>
+            Specification clarity
+            <input name="clarity" type="number" min="0" max="1" step="0.05" value="0.5">
+          </label>
+          <label>
+            Uncertainty
+            <input name="uncertainty" type="number" min="0" max="1" step="0.05" value="0.5">
+          </label>
+          <label>
+            Stakes
+            <input name="stakes" type="number" min="0" max="1" step="0.05" value="0.5">
+          </label>
+          <label>
+            Reversibility
+            <input name="reversibility" type="number" min="0" max="1" step="0.05" value="0.5">
+          </label>
+        </div>
+        <label class="check-row">
+          <input name="production_change" type="checkbox">
+          This requires a production code change
         </label>
-        <label>
-          Specification clarity
-          <input name="clarity" type="number" min="0" max="1" step="0.05" value="0.5">
-        </label>
-        <label>
-          Uncertainty
-          <input name="uncertainty" type="number" min="0" max="1" step="0.05" value="0.5">
-        </label>
-        <label>
-          Stakes
-          <input name="stakes" type="number" min="0" max="1" step="0.05" value="0.5">
-        </label>
-        <label>
-          Reversibility
-          <input name="reversibility" type="number" min="0" max="1" step="0.05" value="0.5">
-        </label>
-      </div>
-      <label class="check-row">
-        <input name="production_change" type="checkbox">
-        This requires a production code change
-      </label>
+      </details>
+
       <label class="check-row">
         <input name="dry_run" type="checkbox">
         Dry run (verify wiring without invoking the configured agent)
       </label>
       <div class="dialog-actions">
         <button id="cancel-dialog-button" class="secondary" type="button">Cancel</button>
-        <button class="primary" type="submit">Create and run</button>
+        <button id="intake-back-button" class="secondary" type="button" hidden>Back</button>
+        <button id="new-round-submit" class="primary" type="submit">Continue</button>
       </div>
       <p id="form-error" class="form-error" role="alert"></p>
     </form>

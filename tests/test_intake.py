@@ -179,3 +179,69 @@ def test_golden_review_request_routes_to_review():
         "questions": [],
     }
     assert _route(payload, []) is Mode.REVIEW
+
+
+# ── serialization round-trip + web helpers ─────────────────────────────────
+
+
+def test_result_to_payload_round_trips_through_parse():
+    from icm_harness.intake import result_to_payload
+    from icm_harness.intake.agent import _parse
+
+    original = propose("anything", agent_fn=_fake_agent(BUILD_PAYLOAD))
+    payload = result_to_payload(original)
+    # JSON-safe: survives a real json encode/decode, enums became their values.
+    payload = json.loads(json.dumps(payload))
+    assert payload["profile_draft"]["intent"] == "build"
+    rebuilt = _parse(payload)
+    assert rebuilt == original  # frozen dataclasses compare by value
+
+
+def test_finalize_from_payload_matches_finalize():
+    from icm_harness.intake import finalize_from_payload, result_to_payload
+
+    result = propose("anything", agent_fn=_fake_agent(BUILD_PAYLOAD))
+    payload = json.loads(json.dumps(result_to_payload(result)))
+    # The web path (serialized proposal + answers) must agree with the in-process
+    # finalize() the CLI uses, for the same choices.
+    direct = finalize("Build it", result, [1, 1])
+    via_payload = finalize_from_payload("Build it", payload, [1, 1])
+    assert via_payload == direct
+
+
+def test_finalize_from_payload_clamps_tampered_draft():
+    from icm_harness.intake import finalize_from_payload
+
+    # A client that tampers with the serialized proposal can only move bounded
+    # routing signals — _parse drops unknown keys and clamps floats to [0, 1].
+    tampered = {
+        "restated_objective": "x",
+        "profile_draft": {"stakes": 9.0, "not_a_field": "danger", "intent": "build"},
+        "questions": [],
+    }
+    profile = finalize_from_payload("obj", tampered, [])
+    assert profile.stakes == 1.0
+    assert not hasattr(profile, "not_a_field")
+
+
+def test_finalize_from_payload_rejects_non_object():
+    from icm_harness.intake import finalize_from_payload
+
+    with pytest.raises(ValueError, match="JSON object"):
+        finalize_from_payload("obj", ["not", "a", "dict"], [])
+
+
+def test_env_facts_reports_git_and_languages(tmp_path):
+    from icm_harness.intake import env_facts
+
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "a.py").write_text("x = 1\n")
+    (tmp_path / "b.py").write_text("y = 2\n")
+    (tmp_path / "c.md").write_text("# doc\n")
+    facts = env_facts(tmp_path)
+    assert facts["is_git_repo"] is True
+    assert ".py" in facts["file_types"]
+    # A non-repo directory reports is_git_repo False.
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert env_facts(plain)["is_git_repo"] is False

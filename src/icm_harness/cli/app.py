@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import importlib.util
 import json
 import os
@@ -178,20 +177,6 @@ def _profile_flags_present(argv) -> bool:
     return any(token.split("=", 1)[0] in _PROFILE_TUNING_FLAGS for token in argv)
 
 
-def _env_facts(root: Path) -> dict:
-    """Cheap, local signals to sharpen inference: is this a git repo, and what
-    languages are present. Deliberately shallow — no file contents leave the
-    machine, only a language tally."""
-    exts: dict[str, int] = {}
-    with contextlib.suppress(OSError):
-        for path in list(root.glob("*.*")) + list(root.glob("*/*.*")):
-            if ".harness" in path.parts or ".git" in path.parts:
-                continue
-            exts[path.suffix.lower()] = exts.get(path.suffix.lower(), 0) + 1
-    top = sorted(exts, key=lambda e: exts[e], reverse=True)[:6]
-    return {"is_git_repo": (root / ".git").exists(), "file_types": top}
-
-
 def _resolve_profile(args) -> TaskProfile | None:
     """Produce the TaskProfile for `icm new`, via LLM-guided intake when the
     request is a bare plain-English objective and a terminal is present.
@@ -229,7 +214,7 @@ def _resolve_profile(args) -> TaskProfile | None:
 
             result = propose_intake(
                 args.objective,
-                env_facts=_env_facts(root),
+                env_facts=intake.env_facts(root),
                 ask_threshold=config.intake.ask_threshold,
             )
         except Exception as exc:  # noqa: BLE001 — the adapter is opt-in, never a gate
@@ -240,7 +225,7 @@ def _resolve_profile(args) -> TaskProfile | None:
         try:
             result = intake.propose(
                 args.objective,
-                env_facts=_env_facts(root),
+                env_facts=intake.env_facts(root),
                 executable=config.agent.executable,
                 model=None,
             )

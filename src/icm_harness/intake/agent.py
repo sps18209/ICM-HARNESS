@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from icm_harness.agents import extract_json, unwrap_envelope
@@ -230,6 +231,21 @@ def propose(
     return _parse(payload)
 
 
+def env_facts(root: Path) -> dict[str, Any]:
+    """Cheap, local signals to sharpen inference: is this a git repo, and what
+    languages are present. Deliberately shallow — no file contents leave the
+    machine, only a language tally. Shared by every intake front-end (CLI and
+    web) so the model sees the same picture however the request arrives."""
+    exts: dict[str, int] = {}
+    with contextlib.suppress(OSError):
+        for path in list(root.glob("*.*")) + list(root.glob("*/*.*")):
+            if ".harness" in path.parts or ".git" in path.parts:
+                continue
+            exts[path.suffix.lower()] = exts.get(path.suffix.lower(), 0) + 1
+    top = sorted(exts, key=lambda e: exts[e], reverse=True)[:6]
+    return {"is_git_repo": (root / ".git").exists(), "file_types": top}
+
+
 def finalize(
     objective: str, result: IntakeResult, answers: Sequence[int]
 ) -> TaskProfile:
@@ -255,3 +271,48 @@ def finalize(
         if field_name in merged:
             kwargs[field_name] = bool(merged[field_name])
     return TaskProfile(**kwargs)
+
+
+def _encode_sets(sets: Mapping[str, Any]) -> dict[str, Any]:
+    """JSON-safe copy of a profile-fields mapping: TaskIntent → its value."""
+    return {k: (v.value if isinstance(v, TaskIntent) else v) for k, v in sets.items()}
+
+
+def result_to_payload(result: IntakeResult) -> dict[str, Any]:
+    """Serialize an `IntakeResult` to a plain JSON-safe dict.
+
+    The inverse of `_parse`: `_parse(result_to_payload(r))` reproduces `r`
+    (after field cleaning). The web layer sends this to the browser and receives
+    it back unchanged with the chosen answers, so `finalize_from_payload` can
+    rebuild the same profile server-side without a second model call.
+    """
+    return {
+        "restated_objective": result.restated_objective,
+        "profile_draft": _encode_sets(result.profile_draft),
+        "questions": [
+            {
+                "id": q.id,
+                "prompt": q.prompt,
+                "recommended": q.recommended,
+                "choices": [
+                    {"label": c.label, "sets": _encode_sets(c.sets)} for c in q.choices
+                ],
+            }
+            for q in result.questions
+        ],
+    }
+
+
+def finalize_from_payload(
+    objective: str, payload: Mapping[str, Any], answers: Sequence[int]
+) -> TaskProfile:
+    """Rebuild a validated `TaskProfile` from a serialized proposal + answers.
+
+    `payload` is a `result_to_payload` dict (round-tripped through a client).
+    It is re-parsed through `_parse`, which drops unknown keys and clamps every
+    signal to [0, 1], so a tampered draft can only nudge bounded routing
+    signals — never inject arbitrary fields. Deterministic; no model call.
+    """
+    if not isinstance(payload, Mapping):
+        raise ValueError("intake proposal must be a JSON object")
+    return finalize(objective, _parse(payload), answers)

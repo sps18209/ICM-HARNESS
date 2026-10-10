@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 import anyio
 
+from icm_harness import intake
 from icm_harness.application import HarnessApplication
 from icm_harness.kernel.contracts import TaskIntent, TaskProfile
 
@@ -123,6 +125,9 @@ class OperatorHandler(BaseHTTPRequestHandler):
             self._authorize(mutation=True)
             route = urlparse(self.path)
             body = self._body()
+            if route.path == "/api/intake/propose":
+                self._intake_propose(body)
+                return
             if route.path == "/api/rounds":
                 self._create_round(body)
                 return
@@ -155,12 +160,68 @@ class OperatorHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._handle_error(exc)
 
+    def _intake_propose(self, body: dict[str, Any]) -> None:
+        """Run the LLM-guided intake for a plain-English objective and return a
+        proposal (restated objective + 2–4 questions) for the chat panel.
+
+        Intake is an assist, never a gate: when the claude CLI is unavailable
+        (a non-claude provider, or the binary is missing) or the model call
+        fails, this reports ``applicable: false`` with a reason so the panel can
+        fall back to the manual fields instead of surfacing an error. The same
+        rule the CLI uses (`_resolve_profile`), kept consistent across both
+        front-ends."""
+        objective = str(body.get("objective", "")).strip()
+        if not objective:
+            raise ValueError("objective is required")
+        app = self.server.runtime.app()
+        agent = app.config.agent
+        if agent.provider != "claude-cli" or shutil.which(agent.executable) is None:
+            self._send_json({
+                "applicable": False,
+                "reason": "guided intake needs the claude CLI; use the fields below",
+            })
+            return
+        try:
+            result = intake.propose(
+                objective,
+                env_facts=intake.env_facts(app.root),
+                executable=agent.executable,
+            )
+        except Exception as exc:  # noqa: BLE001 — intake is an assist, never a gate
+            self._send_json({
+                "applicable": False,
+                "reason": f"couldn't shape that automatically ({type(exc).__name__})",
+            })
+            return
+        self._send_json({"applicable": True, "proposal": intake.result_to_payload(result)})
+
     def _create_round(self, body: dict[str, Any]) -> None:
         objective = str(body.get("objective", "")).strip()
         if not objective:
             raise ValueError("objective is required")
         app = self.server.runtime.app(dry_run=bool(body.get("dry_run", False)))
-        profile = TaskProfile(
+        profile = self._profile_from_body(objective, body)
+        record = app.create_round(profile)
+        if body.get("run"):
+            self.server.runtime.start(record.round_id, dry_run=bool(body.get("dry_run", False)))
+        self._send_json(app.round_payload(record), HTTPStatus.CREATED)
+
+    @staticmethod
+    def _profile_from_body(objective: str, body: dict[str, Any]) -> TaskProfile:
+        """Build the round's TaskProfile. When the body carries an `intake`
+        proposal (the panel's guided path), the chosen answers are folded onto
+        it server-side by the deterministic finalizer — no second model call,
+        and every signal is re-clamped. Otherwise fall back to the explicit
+        fields from the manual/advanced form."""
+        proposal = body.get("intake")
+        if proposal is not None:
+            raw_answers = body.get("answers") or []
+            if not isinstance(raw_answers, list) or not all(
+                isinstance(a, int) and not isinstance(a, bool) for a in raw_answers
+            ):
+                raise ValueError("answers must be a list of integers")
+            return intake.finalize_from_payload(objective, proposal, raw_answers)
+        return TaskProfile(
             objective,
             intent=TaskIntent(body.get("intent", "auto")),
             specification_clarity=float(body.get("clarity", 0.5)),
@@ -174,10 +235,6 @@ class OperatorHandler(BaseHTTPRequestHandler):
             privacy_restricted=bool(body.get("privacy_restricted", False)),
             budget_usd=(float(body["budget_usd"]) if body.get("budget_usd") is not None else None),
         )
-        record = app.create_round(profile)
-        if body.get("run"):
-            self.server.runtime.start(record.round_id, dry_run=bool(body.get("dry_run", False)))
-        self._send_json(app.round_payload(record), HTTPStatus.CREATED)
 
     def _round_detail(self, round_id: str) -> None:
         app = self.server.runtime.app()
