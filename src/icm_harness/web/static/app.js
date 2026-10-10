@@ -286,11 +286,14 @@ function openNewDialog() {
   $("new-round-form").elements.objective.focus();
 }
 
-function renderIntakeQuestions(proposal) {
+function renderIntakeQuestions(proposal, profiler) {
   const plan = $("intake-plan");
+  // Jev (typesafe) measures signals rather than restating, so it returns no
+  // objective text — name the engine so the operator knows what shaped this.
+  const engine = profiler === "typesafe" ? "Shaped by Jev. " : "";
   plan.textContent = proposal.restated_objective
-    ? `Here's the plan: ${proposal.restated_objective}`
-    : "";
+    ? `${engine}Here's the plan: ${proposal.restated_objective}`
+    : (engine ? `${engine}A few quick questions:` : "");
   const container = $("intake-questions");
   container.replaceChildren();
   intake.answers = proposal.questions.map((q) => q.recommended || 0);
@@ -390,7 +393,7 @@ async function submitNewRound(event) {
     }
     intake.proposal = result.proposal;
     intake.phase = "questions";
-    renderIntakeQuestions(result.proposal);
+    renderIntakeQuestions(result.proposal, result.profiler);
     $("intake-back-button").hidden = false;
     submit.textContent = "Create and run";
   } catch (error) {

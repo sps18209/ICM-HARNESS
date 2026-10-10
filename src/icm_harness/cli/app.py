@@ -188,52 +188,35 @@ def _resolve_profile(args) -> TaskProfile | None:
     no interactive terminal. That keeps CI, scripts, and dry-runs unsurprising.
     """
     from icm_harness import intake  # local import: keeps CLI startup light
+    from icm_harness.application import resolve_intake_proposer
 
     root = _root()
     config = load_config(root)
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
-    use_typesafe = config.intake.profiler == "typesafe"
-    cli_intake_ok = (
-        config.agent.provider == "claude-cli"
-        and shutil.which(config.agent.executable) is not None
+    resolved = (
+        None
+        if (
+            getattr(args, "no_intake", False)
+            or _profile_flags_present(sys.argv)
+            or getattr(args, "dry_run", False)
+            or not interactive
+        )
+        else resolve_intake_proposer(
+            config,
+            root,
+            env_facts=intake.env_facts(root),
+            on_note=lambda note: print(f"({note})", file=sys.stderr),
+        )
     )
-    applicable = (
-        not getattr(args, "no_intake", False)
-        and not _profile_flags_present(sys.argv)
-        and not getattr(args, "dry_run", False)
-        and (use_typesafe or cli_intake_ok)
-        and interactive
-    )
-    if not applicable:
+    if resolved is None:
         return _profile_from_args(args)
 
-    result = None
-    if use_typesafe:
-        try:
-            from icm_harness.integrations.typesafe import propose_intake
-
-            result = propose_intake(
-                args.objective,
-                env_facts=intake.env_facts(root),
-                ask_threshold=config.intake.ask_threshold,
-            )
-        except Exception as exc:  # noqa: BLE001 — the adapter is opt-in, never a gate
-            print(f"(typesafe intake unavailable — {exc}; falling back)", file=sys.stderr)
-    if result is None:
-        if not cli_intake_ok:
-            return _profile_from_args(args)
-        try:
-            result = intake.propose(
-                args.objective,
-                env_facts=intake.env_facts(root),
-                executable=config.agent.executable,
-                model=None,
-            )
-        except Exception as exc:  # noqa: BLE001 — intake is an assist, never a gate
-            print(
-                f"(couldn't shape that automatically — {exc}; using defaults)", file=sys.stderr
-            )
-            return _profile_from_args(args)
+    propose, _profiler = resolved
+    try:
+        result = propose(args.objective)
+    except Exception as exc:  # noqa: BLE001 — intake is an assist, never a gate
+        print(f"(couldn't shape that automatically — {exc}; using defaults)", file=sys.stderr)
+        return _profile_from_args(args)
 
     if getattr(args, "yes", False):
         answers = [q.recommended for q in result.questions]
@@ -369,25 +352,37 @@ def cmd_intake_eval(args) -> int:
     Exits 0 on a completed run; with --min-accuracy it exits 1 when the score
     falls below the threshold, so a periodic run can flag a regression."""
     from icm_harness import intake
+    from icm_harness.application import VALID_PROFILERS, resolve_intake_proposer
     from icm_harness.routing import ModeRouter
 
     root = _root()
     config = load_config(root)
-    if config.agent.provider != "claude-cli" or shutil.which(config.agent.executable) is None:
+    if args.profiler is not None and args.profiler not in VALID_PROFILERS:
+        print(f"--profiler must be one of {', '.join(VALID_PROFILERS)}", file=sys.stderr)
+        return 2
+    resolved = resolve_intake_proposer(
+        config,
+        root,
+        env_facts=intake.env_facts(root),
+        profiler=args.profiler,
+        model=args.model,
+        on_note=lambda note: print(f"({note})", file=sys.stderr),
+    )
+    if resolved is None:
+        want = args.profiler or config.intake.profiler
         print(
-            "intake-eval needs the claude-cli provider with its binary on PATH "
-            f"(provider={config.agent.provider}, executable={config.agent.executable})",
+            f"intake-eval can't run the '{want}' profiler here: it needs the claude-cli "
+            "provider with its binary on PATH, or a ready TypeSafe Jev key + SDK.",
             file=sys.stderr,
         )
         return 2
+    propose, profiler = resolved
+    print(f"profiler={profiler}")
 
     router = ModeRouter()
 
     def route(profile) -> str:
         return str(router.route(profile).modes[0])
-
-    def propose(objective: str):
-        return intake.propose(objective, executable=config.agent.executable, model=args.model)
 
     report = intake.run_eval(route=route, propose=propose)
     if args.json:
@@ -813,6 +808,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="score intake routing accuracy on a labelled set (one model call per case)",
     )
     intake_eval.add_argument("--json", action="store_true")
+    intake_eval.add_argument(
+        "--profiler", default=None, choices=("claude-cli", "typesafe"),
+        help="override [intake] profiler for this run (default: the configured profiler)",
+    )
     intake_eval.add_argument(
         "--model", default=None, help="model for the intake calls (default: the configured agent)"
     )

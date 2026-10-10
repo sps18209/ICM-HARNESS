@@ -327,3 +327,28 @@ turning words into the signals it already consumes.
   (`test_intake_picker.py`).
 - `ruff`, the full suite (incl. `test_intake_eval.py`, `test_intake_picker.py`),
   both validators, and `compileall` stay green.
+
+## 12. Profiler parity across front-ends (Phase 3.1)
+
+Which engine shapes a request — TypeSafe **Jev** (`[intake] profiler =
+"typesafe"`) or **claude-cli** — is now decided in one place,
+`application.resolve_intake_proposer`, used by all three front-ends:
+
+- **`icm new`** (`_resolve_profile`), the **web console**
+  (`POST /api/intake/propose`), and **`icm intake-eval`** all call the resolver,
+  so Jev is honored identically everywhere. Before this, the web panel and the
+  eval hard-coded claude-cli and ignored the configured profiler.
+- The resolver lives in `application` (not CORE `intake`) because it reaches the
+  `integrations.typesafe` adapter, which Rule A forbids CORE from importing; the
+  adapter import stays lazy, so TypeSafe remains an optional dependency.
+- **Selection.** Jev is chosen only when ready (SDK importable and an API key
+  discoverable); otherwise it falls back to claude-cli and emits a one-line note.
+  A ready Jev call that fails at runtime also falls back to claude-cli when
+  available — matching `icm new`'s long-standing behavior. Intake stays an
+  assist, never a gate.
+- **Flag on top.** `icm intake-eval --profiler {claude-cli,typesafe}` overrides
+  the configured profiler for one run, so Jev's routing accuracy can be measured
+  on demand. The web panel surfaces the selected profiler (it labels Jev-shaped
+  questions, which carry no restated objective).
+- Covered by `test_intake_resolver.py` (selection, override precedence, both
+  fallback paths) with the web endpoint's handling in `test_web_intake.py`.

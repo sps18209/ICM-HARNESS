@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 import anyio
 
 from icm_harness import intake
-from icm_harness.application import HarnessApplication
+from icm_harness.application import HarnessApplication, resolve_intake_proposer
 from icm_harness.kernel.contracts import TaskIntent, TaskProfile
 
 MAX_REQUEST_BYTES = 64 * 1024
@@ -164,36 +163,41 @@ class OperatorHandler(BaseHTTPRequestHandler):
         """Run the LLM-guided intake for a plain-English objective and return a
         proposal (restated objective + 2–4 questions) for the chat panel.
 
-        Intake is an assist, never a gate: when the claude CLI is unavailable
-        (a non-claude provider, or the binary is missing) or the model call
-        fails, this reports ``applicable: false`` with a reason so the panel can
-        fall back to the manual fields instead of surfacing an error. The same
-        rule the CLI uses (`_resolve_profile`), kept consistent across both
-        front-ends."""
+        Intake is an assist, never a gate: when no profiler can run (a
+        non-claude provider with no ready TypeSafe Jev, or the binary is
+        missing) or the call fails, this reports ``applicable: false`` with a
+        reason so the panel can fall back to the manual fields instead of
+        surfacing an error. Profiler selection goes through the SAME resolver
+        the CLI uses (`resolve_intake_proposer`), so `[intake] profiler =
+        "typesafe"` is honored here exactly as it is on the command line."""
         objective = str(body.get("objective", "")).strip()
         if not objective:
             raise ValueError("objective is required")
         app = self.server.runtime.app()
-        agent = app.config.agent
-        if agent.provider != "claude-cli" or shutil.which(agent.executable) is None:
+        resolved = resolve_intake_proposer(
+            app.config, app.root, env_facts=intake.env_facts(app.root)
+        )
+        if resolved is None:
             self._send_json({
                 "applicable": False,
-                "reason": "guided intake needs the claude CLI; use the fields below",
+                "reason": "guided intake needs the claude CLI or a ready TypeSafe key; "
+                          "use the fields below",
             })
             return
+        propose, profiler = resolved
         try:
-            result = intake.propose(
-                objective,
-                env_facts=intake.env_facts(app.root),
-                executable=agent.executable,
-            )
+            result = propose(objective)
         except Exception as exc:  # noqa: BLE001 — intake is an assist, never a gate
             self._send_json({
                 "applicable": False,
                 "reason": f"couldn't shape that automatically ({type(exc).__name__})",
             })
             return
-        self._send_json({"applicable": True, "proposal": intake.result_to_payload(result)})
+        self._send_json({
+            "applicable": True,
+            "profiler": profiler,
+            "proposal": intake.result_to_payload(result),
+        })
 
     def _create_round(self, body: dict[str, Any]) -> None:
         objective = str(body.get("objective", "")).strip()
