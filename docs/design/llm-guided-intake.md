@@ -274,8 +274,8 @@ turning words into the signals it already consumes.
 - **Phase 2 (built):** surface the same intake in the web operator console as a
   guided-chat panel on the New-round flow. Feeding the Context Wiki into
   inference is deferred (still just the shallow `env_facts` signals).
-- **Phase 3:** the live intake-accuracy eval set + shortcut-key bindings for the
-  question picker.
+- **Phase 3 (built):** the live intake-accuracy eval set (`icm intake-eval`) and
+  shortcut-key bindings for the CLI question picker.
 
 ---
 
@@ -305,3 +305,25 @@ turning words into the signals it already consumes.
 - `env_facts` is shared by both front-ends (one source of truth in `intake/`).
 - `ruff`, the full suite (incl. `test_web_intake.py`), and both validators stay
   green.
+
+## 11. Definition of done (Phase 3)
+
+- **Live eval.** `icm intake-eval` runs a small labelled set (`DEFAULT_CASES`,
+  guarding the §4 worked examples) through the real configured agent — one model
+  call per case, auto-answered with the model's own suggestions — and reports
+  routing accuracy. It is a hand-run measurement, never a CI gate; `--json` emits
+  machine output and `--min-accuracy` makes a periodic run flag a regression. The
+  router is injected, so `intake` gains no dependency on `routing`.
+- **Scoring is pure and tested.** `run_eval(cases, *, route, propose)` is
+  dependency-injected; `test_intake_eval.py` scores canned proposals through the
+  real router hermetically (including that a case's *recommended answer*, not just
+  the draft, reaches the routed profile, and that one failing case never aborts
+  the run).
+- **Shortcut keys.** The CLI question picker takes a single keypress at a TTY (no
+  Enter): a number picks that choice, Enter takes the suggestion, `a` accepts the
+  suggestion for this and every remaining question, `q` cancels. The raw read
+  falls back to a typed line when a TTY/termios isn't available, and the key
+  interpretation is factored out behind an injectable reader
+  (`test_intake_picker.py`).
+- `ruff`, the full suite (incl. `test_intake_eval.py`, `test_intake_picker.py`),
+  both validators, and `compileall` stay green.

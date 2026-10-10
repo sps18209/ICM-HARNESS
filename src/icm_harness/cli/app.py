@@ -240,39 +240,98 @@ def _resolve_profile(args) -> TaskProfile | None:
         return intake.finalize(args.objective, result, answers)
 
     answers = _ask_intake_questions(result)
+    if answers is None:  # cancelled at the question picker
+        return None
     if not _confirm_intake(result):
         return None
     return intake.finalize(args.objective, result, answers)
 
 
-def _ask_intake_questions(result) -> list[int]:
+# Picker control sentinels, returned by _read_choice in place of an index.
+_ACCEPT_ALL = -1  # take the suggestion for this and every remaining question
+_CANCEL = -2  # abandon the round
+
+
+def _read_key(prompt: str) -> str:
+    """Read one keypress for the question picker — no Enter needed — at a TTY,
+    falling back to a full typed line when a raw read isn't available (not a
+    TTY, no `termios`, Windows). Single-key is safe here because a question
+    never has more than a handful of choices, so one digit always suffices.
+    Returns the token read (a single char, or the typed line in fallback)."""
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return input()
+    try:
+        import termios
+        import tty
+    except ImportError:
+        return input()
+    fd = sys.stdin.fileno()
+    try:
+        old = termios.tcgetattr(fd)
+    except (termios.error, ValueError):
+        return input()
+    try:
+        tty.setcbreak(fd)
+        ch = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    if ch == "\x03":  # Ctrl-C
+        raise KeyboardInterrupt
+    # Echo the visible keypress so the transcript shows what was chosen.
+    sys.stdout.write("" if ch in ("\r", "\n", "\x04") else ch)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    return "" if ch == "\x04" else ch  # Ctrl-D reads as "accept suggestion"
+
+
+def _ask_intake_questions(result, *, read=_read_key) -> list[int] | None:
     """Present each question, one at a time, and collect a chosen index each.
-    Enter accepts the recommended choice; a bad entry re-asks."""
+    A number key picks that choice immediately; Enter takes the suggestion;
+    `a` accepts the suggestion for this and every remaining question; `q`
+    cancels (returns None). A bad entry re-asks."""
     answers: list[int] = []
-    total = len(result.questions)
-    if total:
-        print("\nLet's shape this. (Enter accepts the suggestion.)\n")
-    for n, question in enumerate(result.questions, 1):
+    questions = list(result.questions)
+    if questions:
+        print(
+            "\nLet's shape this. (Press a number to pick · Enter takes the "
+            "suggestion · a = accept all · q = cancel)\n"
+        )
+    for n, question in enumerate(questions, 1):
         print(f"  {n}) {question.prompt}")
         for i, choice in enumerate(question.choices):
             mark = "  ← suggested" if i == question.recommended else ""
             print(f"       [{i + 1}] {choice.label}{mark}")
-        answers.append(_read_choice(len(question.choices), question.recommended))
+        chosen = _read_choice(len(question.choices), question.recommended, read=read)
+        if chosen == _CANCEL:
+            return None
+        if chosen == _ACCEPT_ALL:
+            answers.extend(q.recommended for q in questions[n - 1:])
+            print()
+            break
+        answers.append(chosen)
         print()
     return answers
 
 
-def _read_choice(n_choices: int, recommended: int) -> int:
+def _read_choice(n_choices: int, recommended: int, *, read=_read_key) -> int:
+    hint = f"     (1–{n_choices} · Enter = suggested · a = accept all · q = cancel)"
     while True:
         try:
-            raw = input("     > ").strip()
+            raw = read("     > ")
         except (EOFError, KeyboardInterrupt):
             return recommended
-        if not raw:
+        token = raw.strip().lower()
+        if not token:
             return recommended
-        if raw.isdigit() and 1 <= int(raw) <= n_choices:
-            return int(raw) - 1
-        print(f"     (enter 1–{n_choices}, or press Enter for the suggestion)")
+        if token == "a":
+            return _ACCEPT_ALL
+        if token == "q":
+            return _CANCEL
+        if token.isdigit() and 1 <= int(token) <= n_choices:
+            return int(token) - 1
+        print(hint)
 
 
 def _confirm_intake(result) -> bool:
@@ -299,6 +358,55 @@ def cmd_new(args) -> int:
     else:
         _print_round(record)
         print(f"reason={record.route_reason}")
+    return 0
+
+
+def cmd_intake_eval(args) -> int:
+    """Run the labelled intake-accuracy eval against the configured agent.
+
+    Each case makes one real model call and is scored on whether intake routed
+    it to the labelled mode, so this is a hand-run measurement, not a CI gate.
+    Exits 0 on a completed run; with --min-accuracy it exits 1 when the score
+    falls below the threshold, so a periodic run can flag a regression."""
+    from icm_harness import intake
+    from icm_harness.routing import ModeRouter
+
+    root = _root()
+    config = load_config(root)
+    if config.agent.provider != "claude-cli" or shutil.which(config.agent.executable) is None:
+        print(
+            "intake-eval needs the claude-cli provider with its binary on PATH "
+            f"(provider={config.agent.provider}, executable={config.agent.executable})",
+            file=sys.stderr,
+        )
+        return 2
+
+    router = ModeRouter()
+
+    def route(profile) -> str:
+        return str(router.route(profile).modes[0])
+
+    def propose(objective: str):
+        return intake.propose(objective, executable=config.agent.executable, model=args.model)
+
+    report = intake.run_eval(route=route, propose=propose)
+    if args.json:
+        _json({
+            "accuracy": report.accuracy,
+            "passed": report.passed,
+            "total": report.total,
+            "results": [asdict(item) for item in report.results],
+        })
+    else:
+        for item in report.results:
+            mark = "ok  " if item.ok else "MISS"
+            print(f"  [{mark}] want={item.expected_mode:<9} got={item.actual_mode:<9} "
+                  f":: {item.request}")
+        print(f"\nintake routing accuracy: {report.passed}/{report.total} "
+              f"({report.accuracy:.0%})")
+    if args.min_accuracy is not None and report.accuracy < args.min_accuracy:
+        print(f"below --min-accuracy {args.min_accuracy:.0%}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -699,6 +807,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip LLM-guided intake; use flags/defaults for the task profile",
     )
     new.set_defaults(func=cmd_new)
+
+    intake_eval = sub.add_parser(
+        "intake-eval",
+        help="score intake routing accuracy on a labelled set (one model call per case)",
+    )
+    intake_eval.add_argument("--json", action="store_true")
+    intake_eval.add_argument(
+        "--model", default=None, help="model for the intake calls (default: the configured agent)"
+    )
+    intake_eval.add_argument(
+        "--min-accuracy", type=float, default=None,
+        help="exit non-zero if routing accuracy falls below this fraction (0–1)",
+    )
+    intake_eval.set_defaults(func=cmd_intake_eval)
 
     run = sub.add_parser("run", help="run or resume a round")
     _add_round_argument(run)
