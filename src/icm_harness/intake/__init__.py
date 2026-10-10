@@ -24,6 +24,11 @@ _PUBLIC: dict[str, str] = {
     "IntakeResult": "contracts",
     "IntakeQuestion": "contracts",
     "IntakeChoice": "contracts",
+    "run_eval": "eval",
+    "EvalCase": "eval",
+    "EvalCaseResult": "eval",
+    "EvalReport": "eval",
+    "DEFAULT_CASES": "eval",
 }
 
 __all__ = sorted(_PUBLIC)
