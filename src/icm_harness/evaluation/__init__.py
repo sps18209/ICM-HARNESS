@@ -12,6 +12,9 @@ from typing import Any
 
 _PUBLIC: dict[str, str] = {
     "require_stage_outputs": "gates",
+    "load_profile": "profile",
+    "parse_profile": "profile",
+    "verify_candidate": "runner",
 }
 
 __all__ = sorted(_PUBLIC)

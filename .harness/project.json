@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "requirements": [
+    {
+      "id": "ICM-ACCEPTANCE",
+      "description": "The Python acceptance and regression suite passes; the optional authenticated live-agent smoke remains separately reported.",
+      "checks": ["python-tests"]
+    },
+    {
+      "id": "ICM-BOUNDARIES",
+      "description": "Architecture, workspace layout, and Python lint rules hold.",
+      "checks": ["architecture", "layout", "lint"]
+    }
+  ],
+  "checks": [
+    {
+      "id": "python-tests",
+      "argv": ["python", "-m", "pytest", "--junitxml=.harness/runtime/acceptance.xml"],
+      "result_format": "junit",
+      "report": ".harness/runtime/acceptance.xml",
+      "allow_skips": true,
+      "timeout_seconds": 300
+    },
+    {
+      "id": "architecture",
+      "argv": ["python", "scripts/validate_architecture.py"]
+    },
+    {
+      "id": "layout",
+      "argv": ["python", "scripts/validate_layout.py"]
+    },
+    {
+      "id": "lint",
+      "argv": ["python", "-m", "ruff", "check", "src", "tests", "scripts"]
+    }
+  ],
+  "protected_paths": ["tests/test_feedback_loop.py"],
+  "inherit_environment": ["PATH", "HOME", "LANG", "TMPDIR", "PYTHONPATH"]
+}

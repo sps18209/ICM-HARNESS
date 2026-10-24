@@ -7,16 +7,28 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from icm_harness.agents import StageAgent, StageCancelled, StageInvocation, make_stage_agent
+from icm_harness.agents import (
+    DryRunStageAgent,
+    StageAgent,
+    StageCancelled,
+    StageInvocation,
+    make_stage_agent,
+)
 from icm_harness.application.artifacts import ArtifactStore
 from icm_harness.config import HarnessConfig, load_config
 from icm_harness.context import (
     ContextBudget,
     ContextEngine,
+    ContextTrigger,
     FilesystemWikiProvider,
     estimate_tokens,
 )
-from icm_harness.evaluation import require_stage_outputs
+from icm_harness.evaluation import (
+    load_profile,
+    parse_profile,
+    require_stage_outputs,
+    verify_candidate,
+)
 from icm_harness.execution import (
     KeyedLimiter,
     LeaseHeartbeat,
@@ -44,7 +56,13 @@ from icm_harness.routing import (
     ModelRouter,
     ModeRouter,
 )
-from icm_harness.workspace import GitWorktreeManager
+from icm_harness.workspace import (
+    GitWorktreeManager,
+    candidate_identity,
+    file_lock,
+    git_revision,
+    protected_identity,
+)
 
 TERMINAL_ROUND_STATUSES = frozenset({"closed", "failed", "cancelled"})
 
@@ -81,12 +99,32 @@ class HarnessApplication:
         self.performance = BayesianPerformanceStore(
             self.root / ".harness/runtime/model-performance.sqlite3"
         )
-        self.dry_run = dry_run
         self.agent = agent or make_stage_agent(self.config.agent, dry_run=dry_run)
+        self.dry_run = dry_run or isinstance(self.agent, DryRunStageAgent)
 
     def create_round(self, profile: TaskProfile) -> RoundRecord:
         route = ModeRouter().route(profile)
+        captured = None
+        if (
+            not self.dry_run
+            and any(mode.value in {"build", "quick"} for mode in route.modes)
+            and (self.root / ".harness/project.json").exists()
+        ):
+            # Missing profiles remain visible/blocking at verification, so planning is
+            # still usable. An invalid present profile fails before any agent runs.
+            captured = load_profile(self.root).payload()
         record = self.controller.create(profile, route)
+        protected = (
+            protected_identity(self.root, parse_profile(captured).protected_paths)
+            if captured
+            else None
+        )
+        self._event(
+            record.round_id,
+            "project_profile_captured",
+            None,
+            {"profile": captured, "protected_digest": protected},
+        )
         self._write_current(record.round_id)
         self._event(
             record.round_id,
@@ -148,12 +186,15 @@ class HarnessApplication:
             raise ValueError(f"round {round_id} has no isolated workspace to promote")
         if any(event.kind == "round_promoted" for event in self.state.list_events(round_id)):
             raise ValueError(f"round {round_id} was already promoted")
+        identity = self._accepted_candidate(record)
         self._promotion_review(record)
-        self._event(round_id, "merge_approved", None, {})
+        self._event(round_id, "merge_approved", None, identity)
         return self.state.get_round(round_id)
 
     def _merge_is_approved(self, round_id: str) -> bool:
-        return any(event.kind == "merge_approved" for event in self.state.list_events(round_id))
+        identity = self._accepted_candidate(self.state.get_round(round_id))
+        approvals = [e for e in self.state.list_events(round_id) if e.kind == "merge_approved"]
+        return bool(approvals) and approvals[-1].payload == identity
 
     def promote_round(self, round_id: str) -> RoundRecord:
         record = self.state.get_round(round_id)
@@ -168,11 +209,112 @@ class HarnessApplication:
                 f"round {round_id} requires explicit promotion approval before merge — "
                 "call approve_promotion (icm approve-merge / icm_approve_promotion) first"
             )
-        commit = GitWorktreeManager(self.root, self.config.workspace.worktree_root).promote(
-            record.workspace_path, message=f"ICM round {round_id}: {record.objective}"
-        )
+        identity = self._accepted_candidate(record)
+        profile = self._project_profile(round_id)
+        with file_lock(self.root / ".harness/runtime/promotion.lock"):
+            commit = GitWorktreeManager(self.root, self.config.workspace.worktree_root).promote(
+                record.workspace_path,
+                message=f"ICM round {round_id}: {record.objective}",
+                expected_candidate=identity["candidate"],
+                expected_base=identity["base_revision"],
+                generated_paths=profile.generated_paths,
+            )
         self._event(round_id, "round_promoted", None, {"commit": commit})
         return self.state.get_round(round_id)
+
+    def _project_profile(self, round_id: str):
+        for event in self.events(round_id):
+            if event.kind == "project_profile_captured" and event.payload.get("profile"):
+                return parse_profile(event.payload["profile"])
+        raise ValueError(
+            "No captured acceptance profile. Configure .harness/project.json "
+            "and create a new round."
+        )
+
+    def _require_protected(self, round_id: str, workspace: Path) -> None:
+        profile = self._project_profile(round_id)
+        captured = next(e for e in self.events(round_id) if e.kind == "project_profile_captured")
+        if protected_identity(workspace, profile.protected_paths) != captured.payload.get(
+            "protected_digest"
+        ):
+            raise ValueError("protected acceptance inputs changed; create a reviewed new round")
+
+    def _accepted_candidate(self, record: RoundRecord) -> dict:
+        if self.dry_run:
+            raise ValueError("simulated rounds cannot be promoted")
+        profile = self._project_profile(record.round_id)
+        events = [e for e in self.events(record.round_id) if e.kind == "candidate_verified"]
+        if not events or not events[-1].payload.get("passed"):
+            raise ValueError("candidate has no passing executable verification")
+        report = events[-1].payload
+        workspace = Path(record.workspace_path) if record.workspace_path else self.root
+        self._require_protected(record.round_id, workspace)
+        if candidate_identity(workspace, profile.generated_paths) != report["candidate"]:
+            raise ValueError("candidate changed after verification; run a new round")
+        if git_revision(self.root) != report["base_revision"]:
+            raise ValueError(
+                "destination changed after verification; create a round on the new base"
+            )
+        return {
+            key: report[key] for key in ("candidate", "base_revision", "profile_digest", "run_id")
+        }
+
+    def _handoff(self, record: RoundRecord) -> str:
+        sections = [f"Original objective: {record.objective}"]
+        try:
+            profile = self._project_profile(record.round_id)
+            sections.append(
+                "Captured acceptance/environment contract:\n"
+                + json.dumps(profile.payload(), indent=2)
+            )
+        except ValueError:
+            sections.append("No captured project acceptance profile; actual acceptance is blocked.")
+        for artifact in self.list_artifacts(record.round_id):
+            if artifact.stage_ref == record.current_stage:
+                continue
+            text = self.artifacts.read(artifact)
+            reference = self.root / artifact.relative_path
+            sections.append(
+                f"Prior artifact {artifact.stage_ref}/{artifact.name}; SHA256 {artifact.sha256}; "
+                f"full content: {reference}\n{text[:12000]}"
+                + (
+                    "\n[Excerpt only: read the referenced file before relying on it.]"
+                    if len(text) > 12000
+                    else ""
+                )
+            )
+        failures = [e for e in self.events(record.round_id) if e.kind == "candidate_verified"]
+        if failures:
+            latest = failures[-1].payload
+            brief = {
+                key: latest.get(key)
+                for key in (
+                    "run_id",
+                    "passed",
+                    "candidate",
+                    "failure_class",
+                    "requirements",
+                    "error",
+                )
+            }
+            brief["failed_commands"] = [
+                {
+                    **{
+                        k: command.get(k)
+                        for k in ("id", "argv", "exit_code", "error", "stdout", "stderr")
+                    },
+                    "output_tail": {
+                        k: value[-2000:] for k, value in command.get("output_tail", {}).items()
+                    },
+                }
+                for command in latest.get("commands", [])
+                if not command["passed"]
+            ][:4]
+            sections.append(
+                "Most recent harness verification (summary; full logs at referenced paths):\n"
+                + json.dumps(brief, indent=2)
+            )
+        return "\n\n".join(sections)
 
     def approve_round(self, round_id: str) -> RoundRecord:
         record = self.state.get_round(round_id)
@@ -253,7 +395,12 @@ class HarnessApplication:
                     active_gate=stage.ref,
                 )
 
-            result = await self._run_stage(record, owner)
+            try:
+                result = await self._run_stage(record, owner)
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {exc}"[-4000:]
+                self._event(round_id, "round_failed", record.current_stage, {"error": message})
+                return self.state.set_status(round_id, "failed", last_error=message)
             transitions += 1
             if result.status is StageStatus.PASS:
                 continue
@@ -266,13 +413,30 @@ class HarnessApplication:
     async def _run_stage(self, record: RoundRecord, owner: str) -> StageResult:
         stage = get_stage(record.current_stage or "")
         profile = self._profile(record)
-        settings = self.settings_policy.settings(stage.ref, stakes=profile.stakes)
+        previous = [e for e in self.events(record.round_id) if e.kind == "stage_completed"]
+        known_triggers = {trigger.value: trigger for trigger in ContextTrigger}
+        triggers = tuple(
+            known_triggers[code]
+            for code in (previous[-1].payload.get("triggers", []) if previous else [])
+            if code in known_triggers
+        )
+        settings = self.settings_policy.settings(
+            stage.ref,
+            stakes=profile.stakes,
+            triggers=triggers,
+        )
         workspace = self._workspace_for(record, stage.mutates_workspace)
         artifact_dir = self.artifacts.stage_dir(record.round_id, stage.ref)
-        context = self._context_for(profile, stage.ref, settings.context_tier)
+        context = self._context_for(profile, stage.ref, settings.context_tier, triggers)
+        handoff = self._handoff(record)
         model_name, model_payload = self._select_model(
-            record.round_id, profile, stage.ref, context.used_tokens, settings
+            record.round_id,
+            profile,
+            stage.ref,
+            context.used_tokens + estimate_tokens(handoff),
+            settings,
         )
+        model_payload["handoff_tokens"] = estimate_tokens(handoff)
         self._event(record.round_id, "model_selected", stage.ref, model_payload)
 
         authorization = AuthorizationPolicy(
@@ -302,6 +466,7 @@ class HarnessApplication:
                 attempt,
                 authorization,
                 lambda: self.state.get_round(record.round_id).cancel_requested,
+                handoff,
             )
             self._event(
                 record.round_id,
@@ -316,6 +481,17 @@ class HarnessApplication:
                 },
             )
             try:
+                frozen = None
+                if (
+                    not self.dry_run
+                    and not stage.mutates_workspace
+                    and (
+                        record.workspace_path
+                        or stage.ref
+                        in {"build.tester", "build.close", "quick.verify", "quick.close"}
+                    )
+                ):
+                    frozen = candidate_identity(workspace)
                 last_result = await self.executor.run(
                     lambda invocation=invocation: self.agent.run(invocation),
                     round_id=record.round_id,
@@ -326,6 +502,20 @@ class HarnessApplication:
                     max_attempts=max_attempts,
                     attempt=attempt,
                 )
+                if frozen is not None and candidate_identity(workspace) != frozen:
+                    raise ValueError("non-mutating stage changed product inputs")
+                if "verification.json" in last_result.artifacts:
+                    raise ValueError("verification.json is reserved for harness-owned evidence")
+                if last_result.status is StageStatus.PASS:
+                    missing = [
+                        name
+                        for name in stage.required_outputs
+                        if not last_result.artifacts.get(name, "").strip()
+                    ]
+                    if missing:
+                        raise ValueError(
+                            "missing required outputs in current attempt: " + ", ".join(missing)
+                        )
                 written = self.artifacts.write_many(
                     record.round_id,
                     stage.ref,
@@ -343,6 +533,81 @@ class HarnessApplication:
                     )
                 if last_result.status is StageStatus.PASS:
                     require_stage_outputs(stage, artifact_dir)
+                    if not self.dry_run and stage.ref in {"build.tester", "quick.verify"}:
+                        try:
+                            profile_contract = self._project_profile(record.round_id)
+                        except ValueError as exc:
+                            last_result = StageResult(StageStatus.BLOCKED, str(exc))
+                        else:
+                            self._require_protected(record.round_id, workspace)
+                            base_revision = git_revision(self.root)
+                            origins = [
+                                e
+                                for e in self.events(record.round_id)
+                                if e.kind == "workspace_created"
+                            ]
+                            if (
+                                origins
+                                and origins[-1].payload.get("base_revision") != base_revision
+                            ):
+                                raise ValueError("destination moved since worktree creation")
+                            report = await verify_candidate(
+                                profile_contract,
+                                workspace,
+                                self.artifacts.round_root / record.round_id / "verification",
+                                invocation.cancel_requested,
+                                total_timeout_seconds=self.config.runtime.stage_timeout_seconds,
+                            )
+                            report["base_revision"] = base_revision
+                            if git_revision(self.root) != base_revision:
+                                report.update(passed=False, failure_class="environment")
+                            self.artifacts.write_many(
+                                record.round_id,
+                                stage.ref,
+                                {
+                                    "verification.json": json.dumps(report, indent=2),
+                                },
+                            )
+                            self._event(record.round_id, "candidate_verified", stage.ref, report)
+                            if not report["passed"]:
+                                cause = report["failure_class"]
+                                if cause == "implementation":
+                                    writer_ref = (
+                                        "build.writer"
+                                        if stage.ref == "build.tester"
+                                        else "quick.execute"
+                                    )
+                                    self._model_feedback(
+                                        self._writer_model(record.round_id), writer_ref, False
+                                    )
+                                status = (
+                                    StageStatus.CANCELLED
+                                    if cause == "cancelled"
+                                    else StageStatus.BLOCKED
+                                    if cause == "environment"
+                                    else StageStatus.FAIL
+                                )
+                                target = (
+                                    "build.writer"
+                                    if stage.ref == "build.tester" and (status is StageStatus.FAIL)
+                                    else None
+                                )
+                                last_result = StageResult(
+                                    status,
+                                    f"Executable verification failed: {cause}",
+                                    return_to=target,
+                                    trigger_codes=("test_failure_plan",),
+                                )
+                            else:
+                                self._model_feedback(
+                                    self._writer_model(record.round_id),
+                                    "build.writer"
+                                    if stage.ref == "build.tester"
+                                    else "quick.execute",
+                                    True,
+                                )
+                    if not self.dry_run and stage.ref in {"build.close", "quick.close"}:
+                        self._accepted_candidate(self.state.get_round(record.round_id))
                     self._semantic_gate(record, stage.ref, dict(last_result.artifacts))
                 self._event(
                     record.round_id,
@@ -378,7 +643,8 @@ class HarnessApplication:
 
         if last_result.status is StageStatus.PASS:
             self.controller.complete_stage(record.round_id, last_result)
-            self._model_feedback(model_name, stage.ref, True)
+            if stage.ref not in {"build.writer", "quick.execute"}:
+                self._model_feedback(model_name, stage.ref, True)
             return last_result
         if last_result.status is StageStatus.CANCELLED:
             self.state.set_status(record.round_id, "cancelled", last_error=last_result.summary)
@@ -461,12 +727,18 @@ class HarnessApplication:
         if not mutates or self.config.workspace.strategy == "in_place":
             return self.root
         manager = GitWorktreeManager(self.root, self.config.workspace.worktree_root)
-        path = manager.create(record.round_id, "workspace")
+        base_revision = git_revision(self.root)
+        path = manager.create(record.round_id, "workspace", base_ref=base_revision)
         self.state.set_workspace_path(record.round_id, str(path))
-        self._event(record.round_id, "workspace_created", record.current_stage, {"path": str(path)})
+        self._event(
+            record.round_id,
+            "workspace_created",
+            record.current_stage,
+            {"path": str(path), "base_revision": base_revision},
+        )
         return path
 
-    def _context_for(self, profile: TaskProfile, stage_ref: str, requested_tier: int):
+    def _context_for(self, profile: TaskProfile, stage_ref: str, requested_tier: int, triggers=()):
         tokens = self.config.stage_budgets.get(stage_ref, self.config.context.base_budget_tokens)
         tokens = max(1, min(tokens, self.config.context.max_budget_tokens))
         objective = ContextItem(
@@ -485,6 +757,7 @@ class HarnessApplication:
             stage_ref=stage_ref,
             budget=ContextBudget(tokens, self.config.context.max_tier),
             base_items=(objective,),
+            triggers=triggers,
             requested_tier=min(requested_tier, self.config.context.max_tier),
         )
 
@@ -543,7 +816,9 @@ class HarnessApplication:
 
     def _writer_model(self, round_id: str) -> str | None:
         for event in reversed(self.state.list_events(round_id)):
-            if event.stage_ref == "build.writer" and event.kind == "model_selected":
+            if event.stage_ref in {"build.writer", "quick.execute"} and (
+                event.kind == "model_selected"
+            ):
                 return str(event.payload.get("model"))
         return None
 

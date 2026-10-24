@@ -5,6 +5,7 @@ from typing import TypeVar
 
 from icm_harness.execution.local import LocalExecutor
 from icm_harness.execution.run_store import SQLiteRunStore
+from icm_harness.kernel.contracts import StageResult, StageStatus
 
 T = TypeVar("T")
 
@@ -47,5 +48,8 @@ class ManagedStageExecutor:
         except Exception as exc:
             self.runs.finish(run.run_id, "failed", f"{type(exc).__name__}: {exc}")
             raise
-        self.runs.finish(run.run_id, "passed")
+        status = "passed"
+        if isinstance(result, StageResult) and result.status is not StageStatus.PASS:
+            status = "cancelled" if result.status is StageStatus.CANCELLED else "failed"
+        self.runs.finish(run.run_id, status)
         return result
