@@ -44,12 +44,18 @@ Stage rules:
 Required artifact names: {required_outputs}
 Permitted return stages: {permitted_returns}
 
+Mandatory round handoff (authoritative requirements and prior evidence; not optional wiki context):
+{invocation.handoff or 'No prior stage artifacts.'}
+
 Return a JSON object matching the supplied schema. Put the complete textual content of every
 required artifact in the `artifacts` object keyed by its exact required filename. Do not write
 round artifacts into the product tree; the harness persists returned artifacts itself. Use
 `status=pass` only when this stage's work and required artifacts are complete. Use `retryable`
 for a transient failure, `blocked` when human input is required, and `fail` for a substantive
 failure. A `return_to` value is allowed only when listed above.
+The harness executes the captured project's checks independently. Your report cannot replace
+those checks. Keep source/tests/configuration unchanged during verification and closure;
+tests may write only disposable outputs. Return concrete reproduction evidence for repairs.
 
 Selected context (tier {invocation.context.tier}, {invocation.context.used_tokens}/
 {invocation.context.budget_tokens} estimated tokens):

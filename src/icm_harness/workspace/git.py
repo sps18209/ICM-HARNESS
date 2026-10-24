@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from icm_harness.kernel.errors import WorkspaceError
+from icm_harness.workspace.identity import candidate_identity, candidate_paths
 
 
 def _slug(value: str) -> str:
@@ -84,8 +85,22 @@ class GitWorktreeManager:
             sections.append("# staged diff\n" + cached)
         return "\n\n".join(sections)
 
-    def promote(self, path: str | Path, *, message: str) -> str:
+    def promote(
+        self,
+        path: str | Path,
+        *,
+        message: str,
+        expected_candidate: str | None = None,
+        expected_base: str | None = None,
+        generated_paths: tuple[str, ...] = (),
+    ) -> str:
         worktree = Path(path).resolve()
+        if expected_base is not None and self._git("rev-parse", "HEAD") != expected_base:
+            raise WorkspaceError("destination changed since verification")
+        if expected_candidate is not None and (
+            candidate_identity(worktree, generated_paths) != expected_candidate
+        ):
+            raise WorkspaceError("candidate changed since verification")
         root_changes = self._git("status", "--porcelain", "--untracked-files=no")
         if root_changes:
             raise WorkspaceError(
@@ -93,21 +108,39 @@ class GitWorktreeManager:
             )
 
         if self.status(worktree):
-            self._git_at(worktree, "add", "-A")
-            self._git_at(
-                worktree,
-                "-c",
-                "user.name=ICM Harness",
-                "-c",
-                "user.email=icm-harness@localhost",
-                "commit",
-                "-m",
-                message,
-            )
+            paths = candidate_paths(worktree, generated_paths)
+            if paths:
+                self._git_at(worktree, "add", "-A", "--", *paths)
+            staged = set(self._git_at(worktree, "diff", "--cached", "--name-only").splitlines())
+            if staged - set(paths):
+                raise WorkspaceError("staged changes include excluded runtime/generated paths")
+            if self._git_at(worktree, "diff", "--cached", "--name-only"):
+                self._git_at(
+                    worktree,
+                    "-c",
+                    "user.name=ICM Harness",
+                    "-c",
+                    "user.email=icm-harness@localhost",
+                    "commit",
+                    "-m",
+                    message,
+                )
         branch = self._git_at(worktree, "branch", "--show-current")
         if not branch:
             raise WorkspaceError("round worktree is not on a branch")
         before = self._git("rev-parse", "HEAD")
+        if expected_base is not None and before != expected_base:
+            raise WorkspaceError("destination changed before merge")
+        if expected_candidate is not None:
+            if candidate_identity(worktree, generated_paths) != expected_candidate:
+                raise WorkspaceError("candidate changed before merge")
+            if self._git_at(worktree, "rev-parse", "HEAD^{tree}") != self._git_at(
+                worktree, "write-tree"
+            ):
+                raise WorkspaceError("candidate index does not match its commit")
+            # The destination must be an ancestor of the verified commit. Otherwise
+            # a merge could introduce a combined tree that has never been checked.
+            self._git("merge-base", "--is-ancestor", before, branch)
         proc = subprocess.run(
             [
                 "git",

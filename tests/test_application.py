@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import anyio
+from verification_support import configure_acceptance
 
 from icm_harness.agents.contracts import StageInvocation
 from icm_harness.application import HarnessApplication
@@ -17,6 +18,7 @@ def initialize(root: Path) -> None:
     (root / "2_Working_State").mkdir(parents=True)
     (root / "2_Working_State/CURRENT").write_text("NONE\n", encoding="utf-8")
     write_default_config(root / ".harness/config.toml")
+    configure_acceptance(root, "assert Path('produced.txt').read_text() == 'isolated\\n'")
 
 
 def build_profile(objective="ship the feature"):
@@ -137,11 +139,11 @@ def git(root: Path, *args: str) -> None:
 def test_mutation_is_isolated_until_explicit_promotion(tmp_path):
     initialize(tmp_path)
     (tmp_path / ".gitignore").write_text(
-        ".harness/runtime/\n.harness/worktrees/\n", encoding="utf-8"
+        ".harness/runtime/\n.harness/worktrees/\n.harness/rounds/\n", encoding="utf-8"
     )
     (tmp_path / "base.txt").write_text("base\n", encoding="utf-8")
     git(tmp_path, "init")
-    git(tmp_path, "add", ".gitignore", "base.txt")
+    git(tmp_path, "add", ".gitignore", "base.txt", ".harness/project.json")
     git(
         tmp_path,
         "-c",
@@ -192,11 +194,11 @@ def test_advisory_jev_reviews_grade_stages_and_promotion_without_gating(tmp_path
         encoding="utf-8",
     )
     (tmp_path / ".gitignore").write_text(
-        ".harness/runtime/\n.harness/worktrees/\n", encoding="utf-8"
+        ".harness/runtime/\n.harness/worktrees/\n.harness/rounds/\n", encoding="utf-8"
     )
     (tmp_path / "base.txt").write_text("base\n", encoding="utf-8")
     git(tmp_path, "init")
-    git(tmp_path, "add", ".gitignore", "base.txt")
+    git(tmp_path, "add", ".gitignore", "base.txt", ".harness/project.json")
     git(tmp_path, "-c", "user.name=T", "-c", "user.email=t@e.c", "commit", "-m", "base")
 
     def fake_stage_review(objective, stage_ref, outputs, **kwargs):

@@ -43,7 +43,7 @@ BUILD = ModeSpec(
             permitted_return_stages=("build.writer", "build.planner"),
         ),
         StageSpec(
-            Mode.BUILD, "close", mutates_workspace=True, required_outputs=("final-record.md",)
+            Mode.BUILD, "close", required_outputs=("final-record.md",)
         ),
     ),
 )
@@ -97,7 +97,7 @@ QUICK = ModeSpec(
         ),
         StageSpec(Mode.QUICK, "verify", required_outputs=("test-report.json",)),
         StageSpec(
-            Mode.QUICK, "close", mutates_workspace=True, required_outputs=("final-record.md",)
+            Mode.QUICK, "close", required_outputs=("final-record.md",)
         ),
     ),
 )

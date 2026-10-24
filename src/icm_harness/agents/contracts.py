@@ -22,6 +22,7 @@ class StageInvocation:
     attempt: int
     authorization: AuthorizationPolicy
     cancel_requested: Callable[[], bool]
+    handoff: str = ""
 
 
 class StageAgent(Protocol):

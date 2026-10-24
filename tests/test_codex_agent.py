@@ -7,6 +7,7 @@ from pathlib import Path
 
 import anyio
 import pytest
+from verification_support import initialize_verified_repo
 
 from icm_harness.agents.codex_cli import RESULT_SCHEMA, CodexCLIStageAgent
 from icm_harness.agents.dry_run import DryRunStageAgent
@@ -65,6 +66,7 @@ def _initialize(root: Path) -> None:
     (root / "2_Working_State").mkdir(parents=True)
     (root / "2_Working_State/CURRENT").write_text("NONE\n", encoding="utf-8")
     write_default_config(root / ".harness/config.toml")
+    initialize_verified_repo(root)
 
 
 def _in_place_config(root: Path):

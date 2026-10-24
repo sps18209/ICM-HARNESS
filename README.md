@@ -13,6 +13,17 @@ The harness separates five concerns that are commonly collapsed into one agent l
 The custom control plane remains independent from any one model provider, coding agent, workflow engine,
 MCP server, memory vendor, or observability backend.
 
+Actual build/quick acceptance now requires an owner-supplied `.harness/project.json`:
+named requirements mapped to executable checks, with optional environment hooks and
+protected acceptance files. The harness captures this profile before implementation,
+runs its commands independently, and binds verification and merge approval to the
+candidate contents. Missing profiles block verification; dry runs stay simulated.
+See [verified development](docs/operations/verified-development.md) for setup,
+frontend profiles, repair behavior, migration and the limits of these guarantees.
+These enforced guarantees apply to the Python engine through CLI, MCP and console.
+A skill-only self-driving workflow supplies guidance; it cannot issue an
+engine-verified promotion without running the engine's checks.
+
 ## Use it as a skill (recommended)
 
 The lightest way to use the harness is as something a coding agent **calls** — you

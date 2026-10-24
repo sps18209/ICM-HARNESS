@@ -15,6 +15,7 @@ _PUBLIC: dict[str, str] = {
     "StageInvocation": "contracts",
     "StageAgentError": "errors",
     "StageCancelled": "errors",
+    "DryRunStageAgent": "dry_run",
     "make_stage_agent": "factory",
     "render_stage_prompt": "prompting",
     "unwrap_envelope": "claude_json",

@@ -14,9 +14,11 @@ Run it manually with:
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import anyio
@@ -44,8 +46,40 @@ def _initialize_git_workspace(root: Path) -> None:
     (root / "2_Working_State").mkdir(parents=True)
     (root / "2_Working_State/CURRENT").write_text("NONE\n", encoding="utf-8")
     write_default_config(root / ".harness/config.toml")
+    config = root / ".harness/config.toml"
+    config.write_text(
+        config.read_text()
+        .replace('provider = "claude-cli"', 'provider = "codex-cli"')
+        .replace('executable = "claude"', 'executable = "codex"')
+    )
+    (root / ".harness/project.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "requirements": [
+                    {
+                        "id": "SMOKE-1",
+                        "description": "Contributing explains pytest",
+                        "checks": ["contributing"],
+                    }
+                ],
+                "checks": [
+                    {
+                        "id": "contributing",
+                        "argv": [
+                            sys.executable,
+                            "-c",
+                            "from pathlib import Path; "
+                            "assert 'pytest' in Path('CONTRIBUTING.md').read_text()",
+                        ],
+                    }
+                ],
+            }
+        )
+    )
     (root / ".gitignore").write_text(
-        ".harness/runtime/\n.harness/worktrees/\n", encoding="utf-8"
+        ".harness/runtime/\n.harness/worktrees/\n.harness/rounds/\n2_Working_State/\n",
+        encoding="utf-8",
     )
     (root / "README.md").write_text("# smoke target\n", encoding="utf-8")
     _git(root, "init")
@@ -66,10 +100,10 @@ def _initialize_git_workspace(root: Path) -> None:
 def test_real_codex_runs_in_isolated_worktree(tmp_path):
     _initialize_git_workspace(tmp_path)
 
-    # Default config → provider=codex-cli, workspace.strategy=worktree.
+    # Explicitly configured codex-cli; this smoke must exercise its named provider.
     app = HarnessApplication(tmp_path)
     profile = TaskProfile(
-        "Add a one-line CONTRIBUTING.md that says how to run the tests.",
+        "Add a one-line CONTRIBUTING.md that says to run python -m pytest.",
         intent=TaskIntent.QUICK,
         specification_clarity=0.9,
         epistemic_uncertainty=0.1,
@@ -85,7 +119,7 @@ def test_real_codex_runs_in_isolated_worktree(tmp_path):
 
     # The harness must have actually invoked the agent (not just created a round).
     assert "stage_started" in kinds, "no stage was started"
-    assert result.status in {"closed", "waiting_approval", "failed", "blocked"}
+    assert result.status == "closed", result.last_error
 
     # Any mutation must have been isolated to a per-round worktree, never the base.
     latest = app.get_round(created.round_id)
@@ -94,10 +128,9 @@ def test_real_codex_runs_in_isolated_worktree(tmp_path):
         assert worktree != tmp_path
         assert worktree.exists()
 
-    # Whatever the agent produced should be visible as a diff and/or artifacts.
-    diff = app.diff_round(created.round_id)
-    artifacts = app.list_artifacts(created.round_id)
-    assert diff or artifacts, "real agent produced neither a diff nor artifacts"
+    assert latest.workspace_path
+    assert "pytest" in (Path(latest.workspace_path) / "CONTRIBUTING.md").read_text()
+    assert any(e.kind == "candidate_verified" and e.payload["passed"] for e in events)
 
     # If it completed, promotion must be an explicit, approved, clean merge.
     if result.status == "closed" and latest.workspace_path:
