@@ -25,6 +25,7 @@ from icm_harness.context import (
 )
 from icm_harness.evaluation import (
     load_profile,
+    local_verification_providers,
     parse_profile,
     require_stage_outputs,
     verify_candidate,
@@ -46,10 +47,12 @@ from icm_harness.kernel.contracts import (
     TaskProfile,
 )
 from icm_harness.kernel.lifecycle import RoundController
+from icm_harness.kernel.providers import EvidenceRef
 from icm_harness.kernel.state import ArtifactRecord, EventRecord, RoundRecord, SQLiteStateStore
 from icm_harness.modes import get_stage, stage_refs_for_route
 from icm_harness.observability import AuditEvent, JsonlAuditSink
 from icm_harness.policies import AuthorizationPolicy, SituationalSettingsPolicy
+from icm_harness.ports import VerificationProviders
 from icm_harness.routing import (
     BayesianPerformanceStore,
     HeuristicCorrelation,
@@ -77,7 +80,9 @@ class HarnessApplication:
         config: HarnessConfig | None = None,
         agent: StageAgent | None = None,
         dry_run: bool = False,
+        verification_providers: VerificationProviders | None = None,
     ):
+        self.verification_providers = verification_providers
         self.root = Path(root).resolve()
         self.config = config or load_config(self.root)
         state_path = self.root / self.config.runtime.state_db
@@ -247,6 +252,19 @@ class HarnessApplication:
         if not events or not events[-1].payload.get("passed"):
             raise ValueError("candidate has no passing executable verification")
         report = events[-1].payload
+        if report.get("receipt"):
+            providers = self.verification_providers or local_verification_providers(
+                self.artifacts.round_root / record.round_id / "verification"
+            )
+            if providers.evidence is None:
+                raise ValueError("verification evidence store is unavailable")
+            sealed = providers.evidence.get_blob(EvidenceRef(**report["receipt"]))
+            expected = {k: v for k, v in report.items() if k not in {"receipt", "base_revision"}}
+            if json.loads(sealed) != json.loads(json.dumps(expected)):
+                raise ValueError("verification receipt does not match accepted evidence")
+            for command in report["commands"]:
+                if command.get("report_blob"):
+                    providers.evidence.get_blob(EvidenceRef(**command["report_blob"]))
         workspace = Path(record.workspace_path) if record.workspace_path else self.root
         self._require_protected(record.round_id, workspace)
         if candidate_identity(workspace, profile.generated_paths) != report["candidate"]:
@@ -557,6 +575,7 @@ class HarnessApplication:
                                 self.artifacts.round_root / record.round_id / "verification",
                                 invocation.cancel_requested,
                                 total_timeout_seconds=self.config.runtime.stage_timeout_seconds,
+                                providers=self.verification_providers,
                             )
                             report["base_revision"] = base_revision
                             if git_revision(self.root) != base_revision:
@@ -584,12 +603,12 @@ class HarnessApplication:
                                     StageStatus.CANCELLED
                                     if cause == "cancelled"
                                     else StageStatus.BLOCKED
-                                    if cause == "environment"
+                                    if cause in {"environment", "unsupported_capability"}
                                     else StageStatus.FAIL
                                 )
                                 target = (
                                     "build.writer"
-                                    if stage.ref == "build.tester" and (status is StageStatus.FAIL)
+                                    if stage.ref == "build.tester" and cause == "implementation"
                                     else None
                                 )
                                 last_result = StageResult(

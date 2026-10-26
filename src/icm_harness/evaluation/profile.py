@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import asdict, dataclass, field
-from hashlib import sha256
 from pathlib import Path, PurePosixPath
+
+from icm_harness.kernel.verification import Check, ProjectProfile, Requirement
 
 
 def relative_path(value: object) -> str:
@@ -27,47 +27,6 @@ def _identifier(value: object) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value):
         raise ValueError("IDs must contain letters, digits, underscore, dot or hyphen")
     return value
-
-
-@dataclass(frozen=True)
-class Check:
-    id: str
-    argv: tuple[str, ...]
-    timeout_seconds: float = 300
-    cwd: str = ""
-    result_format: str = "exit_code"
-    report: str = ""
-    allow_skips: bool = False
-    expected_tests: tuple[str, ...] = ()
-    optional_skips: dict[str, str] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class Requirement:
-    id: str
-    description: str
-    checks: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class ProjectProfile:
-    schema_version: int
-    requirements: tuple[Requirement, ...]
-    checks: tuple[Check, ...]
-    setup: tuple[Check, ...] = ()
-    reset: tuple[Check, ...] = ()
-    ready: tuple[Check, ...] = ()
-    teardown: tuple[Check, ...] = ()
-    generated_paths: tuple[str, ...] = ()
-    protected_paths: tuple[str, ...] = ()
-    inherit_environment: tuple[str, ...] = ("PATH", "HOME", "LANG", "TMPDIR")
-
-    def payload(self) -> dict:
-        return json.loads(json.dumps(asdict(self)))
-
-    @property
-    def digest(self) -> str:
-        return sha256(json.dumps(self.payload(), sort_keys=True).encode()).hexdigest()
 
 
 def _check(data: object) -> Check:
@@ -180,6 +139,11 @@ def parse_profile(data: object) -> ProjectProfile:
         for name in env
     ):
         raise ValueError("inherit_environment must contain environment variable names")
+    capabilities = data.get("required_capabilities", [])
+    if not isinstance(capabilities, (list, tuple)) or any(
+        not isinstance(item, str) or not item.strip() for item in capabilities
+    ):
+        raise ValueError("required_capabilities must contain non-empty strings")
     return ProjectProfile(
         data["schema_version"],
         tuple(requirements),
@@ -187,6 +151,7 @@ def parse_profile(data: object) -> ProjectProfile:
         generated_paths=tuple(relative_path(path) for path in generated),
         protected_paths=tuple(relative_path(path) for path in protected),
         inherit_environment=tuple(env),
+        required_capabilities=tuple(capabilities),
     )
 
 

@@ -150,3 +150,54 @@ The repository's own `.harness/project.json` provides executable Python and
 architecture checks. Install the dev dependencies before using it. It explicitly
 permits the optional live-model smoke to be skipped; it does not claim a live
 provider was exercised. Extension checks remain a separate CI job.
+
+## Provider-neutral library use
+
+`from icm_harness.application import build_application` creates the existing
+application without importing operator CLI, MCP or web modules. A supplied
+`StageAgent` can run without either model CLI adapter. Existing entrypoints stay
+available as optional clients.
+
+Use `VerificationProviders(execution, candidate, verifiers, evidence=None)` from
+`icm_harness.ports` to supply explicit implementations. Pass the bundle as
+`providers=` to `build_application` or `verify_with_providers`. The legacy
+`verify_candidate` composes local defaults when no bundle is supplied. The
+application still requires its local Git workspace/promotion infrastructure;
+provider-neutral verification does not yet make the entire application remote.
+
+Profiles can specify `required_capabilities`, for example `["process",
+"filesystem"]`. An unavailable capability blocks before setup/check commands.
+The local provider reports POSIX process support and trusted-development mode.
+It records Python runtime facts and declared lockfile digests, not a complete
+attestation of installed dependencies. Cancellation invokes the provider and
+always attempts cleanup. A cleanup failure invalidates acceptance.
+
+The default local evidence store lives under the verification directory's
+`store/`. It stores raw reports and final snapshots by SHA-256, checks them on
+read, and creates each run receipt once. Approval checks the receipt and raw
+report blobs again. `FilesystemEvidenceStore.put_blob(bytes, media_type)` also
+supports explicit binary artifacts, with a default 32 MiB blob limit. Existing
+round event records index the result. These are local integrity receipts; an
+isolated evaluator and external authority remain separate requirements.
+
+For Python projects with a `src` layout, explicitly select the candidate source
+before importing its test framework/adapter. The repository's profile does this
+with `sys.path.insert(0, 'src')` in its captured argv. An editable installation
+pointing to another checkout is insufficient evidence about the candidate.
+
+## Cross-language acceptance fixture
+
+Run the synthetic TypeScript target without a live model or service account:
+
+```sh
+npm ci --ignore-scripts --prefix fixtures/typescript_api
+python scripts/verify_typescript_fixture.py
+```
+
+The script creates a temporary Git candidate, compiles its TypeScript, runs three
+native tests against a real local HTTP server, and requires acceptance. It then
+changes an unauthorized response from 401 to 200, recompiles, and requires
+rejection. Raw reports and receipts remain under
+`.harness/runtime/typescript-validation/`. CI runs this on Node 20. Test cases and
+tokens are synthetic. This fixture establishes API test integration; visual
+browser checks and build/deployment-bound delivery remain later gates.

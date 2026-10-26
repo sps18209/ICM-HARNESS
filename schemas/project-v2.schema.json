@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ICM project profile v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "requirements",
+    "checks"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "description",
+          "checks"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/check"
+      }
+    },
+    "setup": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/check"
+      }
+    },
+    "reset": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/check"
+      }
+    },
+    "ready": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/check"
+      }
+    },
+    "teardown": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/check"
+      }
+    },
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "generated_paths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "inherit_environment": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required_capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "argv"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "timeout_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 3600
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "result_format": {
+          "enum": [
+            "exit_code",
+            "junit",
+            "pytest_events"
+          ]
+        },
+        "report": {
+          "type": "string",
+          "minLength": 1
+        },
+        "allow_skips": {
+          "const": false,
+          "deprecated": true
+        },
+        "expected_tests": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "optional_skips": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "test_manifest": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "result_format"
+            ],
+            "properties": {
+              "result_format": {
+                "enum": [
+                  "junit",
+                  "pytest_events"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "report"
+            ],
+            "oneOf": [
+              {
+                "required": [
+                  "test_manifest"
+                ],
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "expected_tests"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "optional_skips"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "expected_tests"
+                ],
+                "not": {
+                  "required": [
+                    "test_manifest"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "$comment": "The runtime loader additionally validates relative paths, referenced check IDs, uniqueness across groups, and optional-skip membership. Manifest paths expand at round creation; they are absent from the frozen payload."
+}

@@ -14,7 +14,10 @@ _PUBLIC: dict[str, str] = {
     "require_stage_outputs": "gates",
     "load_profile": "profile",
     "parse_profile": "profile",
-    "verify_candidate": "runner",
+    "verify_candidate": "compat",
+    "local_verification_providers": "compat",
+    "verify_with_providers": "runner",
+    "decide_acceptance": "acceptance",
 }
 
 __all__ = sorted(_PUBLIC)
