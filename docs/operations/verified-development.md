@@ -201,3 +201,57 @@ rejection. Raw reports and receipts remain under
 `.harness/runtime/typescript-validation/`. CI runs this on Node 20. Test cases and
 tokens are synthetic. This fixture establishes API test integration; visual
 browser checks and build/deployment-bound delivery remain later gates.
+
+## Built outputs and browser evidence
+
+Add `artifact_paths` to bind acceptance to explicit built files:
+
+```json
+{
+  "generated_paths": ["dist"],
+  "artifact_paths": ["dist/application.zip"]
+}
+```
+
+The local provider deletes declared untracked output files before environment
+hooks. Have `setup`, `reset` or `ready` produce them. A stale file cannot stand in
+for a successful build. Tracked files, symlink outputs, protected-input/report
+collisions and paths outside generated/runtime areas are refused. Every declared
+file must exist before checks, stay unchanged through cleanup, and match again
+at approval/promotion. Each file is limited to 32 MiB; use explicit packaged
+artifacts rather than directory globs. Source promotion records the tested
+artifact digest but does not automatically deploy or copy those files.
+
+A check's optional `attachments` field declares required binary evidence:
+
+```json
+{
+  "attachments": {
+    ".harness/runtime/browser/desktop.png": "image/png",
+    ".harness/runtime/browser/desktop.zip": "application/zip"
+  }
+}
+```
+
+Declared attachments are cleared before that command and stored by content hash
+afterward, including when an ordinary test failure exits nonzero. A missing
+required attachment cannot produce passing acceptance. Media types are declared
+metadata, not an independent determination of file format or evidentiary adequacy.
+Approval rechecks stored attachment bytes. Injected execution providers must
+advertise `fresh-artifacts` when using these fresh-output contracts.
+
+The TypeScript fixture now needs its pinned Chromium installation:
+
+```sh
+npm ci --ignore-scripts --prefix fixtures/typescript_api
+cd fixtures/typescript_api
+npx playwright install --with-deps --only-shell chromium
+cd ../..
+python scripts/verify_typescript_fixture.py
+```
+
+The experiment checks three API tests and two browser journeys (desktop 1280x800,
+mobile 390x844). It also requires independent rejection of API authorization and
+browser-only regressions. Screenshots/traces and built bytes are retained in the
+verification store; CI uploads the synthetic evidence. Example passing screenshots
+are copied to `.harness/runtime/browser-qa/`. No client data or live model is used.

@@ -3,7 +3,12 @@
 from pathlib import Path
 
 from icm_harness.kernel.providers import CandidateRef
-from icm_harness.workspace import candidate_identity, git_revision, protected_identity
+from icm_harness.workspace import (
+    artifact_identity,
+    candidate_identity,
+    git_revision,
+    protected_identity,
+)
 
 
 class GitCandidateProvider:
@@ -28,3 +33,6 @@ class GitCandidateProvider:
 
     def resolve_artifact(self, ref: CandidateRef) -> str:
         raise ValueError("Git source identity does not establish a built artifact")
+
+    def artifact_identity(self, locator: str, paths: tuple[str, ...]) -> str:
+        return artifact_identity(Path(locator), paths)

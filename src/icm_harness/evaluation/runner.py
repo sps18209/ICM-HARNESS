@@ -28,6 +28,7 @@ async def _command(check: Check, handle, providers: VerificationProviders) -> di
                 check.cwd,
                 check.timeout_seconds,
                 check.report if check.result_format != "exit_code" else "",
+                tuple(check.attachments),
             ),
         )
     except (OSError, ValueError, TimeoutError) as exc:
@@ -72,6 +73,15 @@ async def _command(check: Check, handle, providers: VerificationProviders) -> di
                 error=f"{type(exc).__name__}: {exc}",
                 infrastructure_error=isinstance(exc, OSError),
             )
+    if check.attachments and not observed.error:
+        result["attachments"] = []
+        try:
+            for path, media_type in check.attachments.items():
+                content = await providers.execution.collect(handle, path, 32 * 1024 * 1024)
+                reference = providers.evidence.put_blob(content, media_type)
+                result["attachments"].append({"path": path, "blob": asdict(reference)})
+        except (OSError, ValueError) as exc:
+            result.update(passed=False, error=f"required attachment missing or invalid: {exc}")
     return result
 
 
@@ -115,12 +125,28 @@ async def verify_with_providers(
     environment = providers.execution.capabilities()
     report["environment"] = asdict(environment)
     missing = set(profile.required_capabilities) - set(environment.capabilities)
+    has_attachments = any(
+        check.attachments
+        for group in ("checks", "setup", "reset", "ready", "teardown")
+        for check in getattr(profile, group)
+    )
+    if (
+        profile.artifact_paths or has_attachments
+    ) and "fresh-artifacts" not in environment.capabilities:
+        missing.add("fresh-artifacts")
+    if profile.artifact_paths and (
+        providers.evidence is None
+        or not callable(getattr(providers.candidate, "artifact_identity", None))
+    ):
+        missing.add("artifact-evidence")
     unsupported = {
         check.result_format
         for group in ("checks", "setup", "reset", "ready", "teardown")
         for check in getattr(profile, group)
         if check.result_format != "exit_code" and check.result_format not in providers.verifiers
     }
+    if providers.evidence is None and has_attachments:
+        missing.add("attachment-evidence-store")
     if missing or unsupported:
         report["failure_class"] = "unsupported_capability"
         report["error"] = (
@@ -130,6 +156,25 @@ async def verify_with_providers(
     async def execute():
         try:
             for phase in ("setup", "reset", "ready", "checks"):
+                if phase == "checks" and profile.artifact_paths:
+                    try:
+                        report["artifact_digest"] = providers.candidate.artifact_identity(
+                            str(root), profile.artifact_paths
+                        )
+                        report["artifacts"] = []
+                        for name in profile.artifact_paths:
+                            content = await providers.execution.collect(
+                                handle, name, 32 * 1024 * 1024
+                            )
+                            reference = providers.evidence.put_blob(
+                                content, "application/octet-stream"
+                            )
+                            report["artifacts"].append({"path": name, "blob": asdict(reference)})
+                    except (OSError, ValueError) as exc:
+                        report.update(
+                            failure_class="environment", error=f"artifact capture failed: {exc}"
+                        )
+                        return
                 for check in getattr(profile, phase):
                     entry = await _command(check, handle, providers)
                     report["commands"].append({**entry, "phase": phase})
@@ -170,7 +215,13 @@ async def verify_with_providers(
         if report["failure_class"] is None:
             with anyio.fail_after(total_timeout_seconds):
                 handle = await providers.execution.prepare(
-                    EnvironmentSpec(str(root), str(evidence), env, profile.required_capabilities)
+                    EnvironmentSpec(
+                        str(root),
+                        str(evidence),
+                        env,
+                        profile.required_capabilities,
+                        profile.artifact_paths,
+                    )
                 )
                 report["environment"] = asdict(handle.environment)
                 async with anyio.create_task_group() as group:
@@ -203,6 +254,15 @@ async def verify_with_providers(
     protected_after = providers.candidate.protected_identity(str(root), profile.protected_paths)
     if protected_after != protected_before:
         report["failure_class"] = "evaluator_changed"
+    if profile.artifact_paths and report.get("artifact_digest"):
+        try:
+            if (
+                providers.candidate.artifact_identity(str(root), profile.artifact_paths)
+                != report["artifact_digest"]
+            ):
+                report["failure_class"] = "artifact_changed"
+        except (OSError, ValueError) as exc:
+            report.update(failure_class="artifact_changed", error=f"built artifact changed: {exc}")
     decision = decide_acceptance(profile, report["commands"], report["failure_class"])
     report["requirements"] = list(decision.requirements)
     report["acceptance"] = {"status": decision.status, "reasons": list(decision.reasons)}

@@ -1,14 +1,92 @@
 {
   "schema_version": 2,
   "requirements": [
-    {"id": "API-001", "description": "Authorized writes persist; unauthorized and invalid writes fail.", "checks": ["api-tests"]}
+    {
+      "id": "API-001",
+      "description": "Authorized writes persist; unauthorized and invalid writes fail.",
+      "checks": [
+        "api-tests"
+      ]
+    },
+    {
+      "id": "BROWSER-001",
+      "description": "The form saves through the API and survives reload on desktop and mobile.",
+      "checks": [
+        "browser-tests"
+      ]
+    }
   ],
-  "setup": [{"id": "compile", "argv": ["npm", "run", "build"]}],
-  "checks": [{
-    "id": "api-tests", "argv": ["npm", "test"], "result_format": "junit",
-    "report": ".harness/runtime/api.xml",
-    "expected_tests": ["test::reject unauthorized write", "test::create and read item", "test::reject invalid input"]
-  }],
-  "protected_paths": ["src/api.test.ts", "tsconfig.json", "package.json", "package-lock.json"],
-  "required_capabilities": ["process", "filesystem"]
+  "setup": [
+    {
+      "id": "compile",
+      "argv": [
+        "npm",
+        "run",
+        "build"
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "id": "api-tests",
+      "argv": [
+        "npm",
+        "test"
+      ],
+      "result_format": "junit",
+      "report": ".harness/runtime/api.xml",
+      "expected_tests": [
+        "test::reject unauthorized write",
+        "test::create and read item",
+        "test::reject invalid input"
+      ]
+    },
+    {
+      "id": "browser-tests",
+      "argv": [
+        "npm",
+        "run",
+        "test:browser"
+      ],
+      "result_format": "junit",
+      "report": ".harness/runtime/browser.xml",
+      "expected_tests": [
+        "save.spec.js::[desktop] save persists after reload",
+        "save.spec.js::[mobile] save persists after reload"
+      ],
+      "attachments": {
+        ".harness/runtime/browser/desktop.png": "image/png",
+        ".harness/runtime/browser/desktop.zip": "application/zip",
+        ".harness/runtime/browser/mobile.png": "image/png",
+        ".harness/runtime/browser/mobile.zip": "application/zip"
+      }
+    }
+  ],
+  "protected_paths": [
+    "src/api.test.ts",
+    "tsconfig.json",
+    "package.json",
+    "package-lock.json",
+    "browser/save.spec.js",
+    "playwright.config.js"
+  ],
+  "required_capabilities": [
+    "process",
+    "filesystem"
+  ],
+  "artifact_paths": [
+    ".harness/runtime/build/server.js",
+    ".harness/runtime/build/ui.js",
+    ".harness/runtime/build/api.test.js"
+  ],
+  "ready": [
+    {
+      "id": "browser-ready",
+      "argv": [
+        "node",
+        "-e",
+        "const {chromium}=require('@playwright/test'); chromium.launch({headless:true}).then(async b=>{console.log('Chromium '+b.version());await b.close();}).catch(e=>{console.error(e.message);process.exitCode=1;});"
+      ]
+    }
+  ]
 }

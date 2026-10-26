@@ -101,6 +101,16 @@
         "type": "string",
         "minLength": 1
       }
+    },
+    "artifact_paths": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Explicit fresh build outputs within generated_paths or .harness/runtime."
     }
   },
   "$defs": {
@@ -166,6 +176,15 @@
         "test_manifest": {
           "type": "string",
           "minLength": 1
+        },
+        "attachments": {
+          "type": "object",
+          "maxProperties": 16,
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9.+_-]+/[A-Za-z0-9.+_-]+$"
+          },
+          "description": "Required binary evidence paths mapped to media types; collected after this command."
         }
       },
       "allOf": [
