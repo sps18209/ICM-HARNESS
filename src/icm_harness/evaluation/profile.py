@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 
@@ -38,6 +38,8 @@ class Check:
     result_format: str = "exit_code"
     report: str = ""
     allow_skips: bool = False
+    expected_tests: tuple[str, ...] = ()
+    optional_skips: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -91,13 +93,33 @@ def _check(data: object) -> Check:
     if cwd:
         relative_path(cwd)
     fmt = data.get("result_format", "exit_code")
-    if fmt not in {"exit_code", "junit"}:
-        raise ValueError("result_format must be exit_code or junit")
+    if not isinstance(fmt, str) or fmt not in {"exit_code", "junit", "pytest_events"}:
+        raise ValueError("result_format must be exit_code, junit or pytest_events")
     report = data.get("report", "")
-    if fmt == "junit":
+    if fmt != "exit_code":
         relative_path(report)
     if not isinstance(data.get("allow_skips", False), bool):
         raise ValueError("allow_skips must be boolean")
+    if data.get("allow_skips", False):
+        raise ValueError(
+            "blanket allow_skips is unsafe; use optional_skips with exact IDs and reasons"
+        )
+    expected = data.get("expected_tests", [])
+    optional = data.get("optional_skips", {})
+    if (
+        not isinstance(expected, (list, tuple))
+        or any(not isinstance(item, str) or not item.strip() for item in expected)
+        or len(set(expected)) != len(expected)
+        or (fmt != "exit_code" and not expected)
+    ):
+        raise ValueError("report checks require unique, non-empty expected_tests")
+    if not isinstance(optional, dict) or any(
+        key not in expected or not isinstance(reason, str) or not reason.strip()
+        for key, reason in optional.items()
+    ):
+        raise ValueError("optional_skips must map expected test IDs to non-empty reasons")
+    if fmt == "exit_code" and (expected or optional):
+        raise ValueError("test identities require a structured report check")
     return Check(
         _identifier(data.get("id")),
         tuple(argv),
@@ -105,15 +127,17 @@ def _check(data: object) -> Check:
         cwd,
         fmt,
         report,
-        data.get("allow_skips", False),
+        False,
+        tuple(expected),
+        dict(optional),
     )
 
 
 def parse_profile(data: object) -> ProjectProfile:
     if not isinstance(data, dict) or set(data) - set(ProjectProfile.__dataclass_fields__):
         raise ValueError("invalid project profile fields")
-    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
-        raise ValueError("project profile schema_version must be 1")
+    if type(data.get("schema_version")) is not int or data["schema_version"] not in {1, 2}:
+        raise ValueError("project profile schema_version must be 1 or 2")
     groups = {}
     for group in ("checks", "setup", "reset", "ready", "teardown"):
         values = data.get(group, [])
@@ -157,7 +181,7 @@ def parse_profile(data: object) -> ProjectProfile:
     ):
         raise ValueError("inherit_environment must contain environment variable names")
     return ProjectProfile(
-        1,
+        data["schema_version"],
         tuple(requirements),
         **groups,
         generated_paths=tuple(relative_path(path) for path in generated),
@@ -170,4 +194,36 @@ def load_profile(root: Path) -> ProjectProfile:
     path = root / ".harness/project.json"
     if not path.is_file():
         raise ValueError("verification requires an owner-supplied .harness/project.json")
-    return parse_profile(json.loads(path.read_text(encoding="utf-8")))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return parse_profile(data)
+    protected = data.get("protected_paths", [])
+    if not isinstance(protected, (list, tuple)):
+        raise ValueError("protected_paths must be an array")
+    protected = list(protected)
+    for group in ("checks", "setup", "reset", "ready", "teardown"):
+        checks = data.get(group, [])
+        if not isinstance(checks, (list, tuple)):
+            raise ValueError(f"{group} must be an array")
+        for check in checks:
+            if not isinstance(check, dict) or "test_manifest" not in check:
+                continue
+            relative = relative_path(check.pop("test_manifest"))
+            manifest_path = (root / relative).resolve()
+            if not manifest_path.is_relative_to(root.resolve()):
+                raise ValueError("test manifest escapes project")
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if (
+                not isinstance(manifest, dict)
+                or set(manifest) != {"schema_version", "tests", "optional_skips"}
+                or type(manifest["schema_version"]) is not int
+                or manifest["schema_version"] != 1
+                or "expected_tests" in check
+                or "optional_skips" in check
+            ):
+                raise ValueError("invalid or conflicting test manifest")
+            check["expected_tests"] = manifest["tests"]
+            check["optional_skips"] = manifest["optional_skips"]
+            protected.append(relative)
+    data["protected_paths"] = list(dict.fromkeys(protected))
+    return parse_profile(data)

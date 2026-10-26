@@ -142,6 +142,29 @@ def test_protected_acceptance_inputs_cannot_be_weakened(tmp_path):
     assert "protected acceptance inputs changed" in result.last_error
 
 
+def test_absent_protected_configuration_cannot_be_added_by_writer(tmp_path):
+    class ConfigWriter(ProductAgent):
+        async def run(self, inv):
+            result = await super().run(inv)
+            if inv.stage.ref == "build.writer":
+                (inv.workspace / "conftest.py").write_text("# alter evaluator collection\n")
+            return result
+
+    app, _, _ = project(tmp_path, ConfigWriter())
+    path = tmp_path / ".harness/project.json"
+    payload = json.loads(path.read_text())
+    payload["protected_paths"] = ["conftest.py"]
+    path.write_text(json.dumps(payload))
+    git(tmp_path, "add", ".harness/project.json")
+    git(tmp_path, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-m", "guard")
+    rec = app.create_round(TaskProfile(
+        "build", intent=TaskIntent.BUILD, specification_clarity=0.9, epistemic_uncertainty=0.1
+    ))
+    result = anyio.run(app.run_round, rec.round_id)
+    assert result.status == "failed"
+    assert "protected acceptance inputs changed" in result.last_error
+
+
 def test_close_cannot_edit_tested_product(tmp_path):
     app, rec, _ = project(tmp_path, ProductAgent(close_edit=True))
     result = anyio.run(app.run_round, rec.round_id)
@@ -183,13 +206,15 @@ def test_quick_mode_also_requires_executable_checks(tmp_path):
 @pytest.mark.parametrize(
     "xml,allow_skips,expected",
     [
-        ("<testsuite/>", False, False),
-        ("<testsuite><testcase><skipped/></testcase></testsuite>", True, False),
-        ("<testsuite><testcase/><testcase><skipped/></testcase></testsuite>", False, False),
-        ("<testsuite><testcase/><testcase><skipped/></testcase></testsuite>", True, True),
-        ("<testsuite><testcase><failure/></testcase></testsuite>", False, False),
-        ("<testsuite errors='1'><testcase/></testsuite>", False, False),
-        ("<testsuite><testcase/></testsuite>", False, True),
+        ('<testsuite/>', False, False),
+        ('<testsuite><testcase name="optional"><skipped/></testcase></testsuite>', True, False),
+        ('<testsuite><testcase name="required"/>'
+         '<testcase name="optional"><skipped/></testcase></testsuite>', False, False),
+        ('<testsuite><testcase name="required"/>'
+         '<testcase name="optional"><skipped/></testcase></testsuite>', True, True),
+        ('<testsuite><testcase name="optional"><failure/></testcase></testsuite>', False, False),
+        ('<testsuite errors="1"><testcase name="required"/></testsuite>', False, False),
+        ('<testsuite><testcase name="required"/></testsuite>', False, True),
     ],
 )
 def test_junit_counts_and_skips_are_evidence_not_exit_code_only(
@@ -207,7 +232,9 @@ def test_junit_counts_and_skips_are_evidence_not_exit_code_only(
         ],
         result_format="junit",
         report=".harness/runtime/result.xml",
-        allow_skips=allow_skips,
+        expected_tests=[f"::{name}" for name in ("required", "optional") if f'name="{name}"' in xml]
+        or ["::required"],
+        optional_skips={"::optional": "Optional fixture"} if allow_skips else {},
     )
     report = anyio.run(
         verify_candidate, parse_profile(payload), tmp_path, tmp_path / ".harness/rounds"
@@ -223,10 +250,11 @@ def test_stale_junit_cannot_supply_success_for_a_command_that_writes_nothing(tmp
         argv=[sys.executable, "-c", "pass"],
         result_format="junit",
         report=".harness/runtime/result.xml",
+        expected_tests=["::required"],
     )
     output = tmp_path / ".harness/runtime/result.xml"
     output.parent.mkdir(parents=True)
-    output.write_text("<testsuite><testcase/></testsuite>")
+    output.write_text('<testsuite><testcase name="required"/></testsuite>')
     report = anyio.run(
         verify_candidate, parse_profile(payload), tmp_path, tmp_path / ".harness/rounds"
     )
@@ -369,7 +397,9 @@ def test_total_verification_budget_is_enforced(tmp_path):
 def test_junit_output_cannot_destroy_a_tracked_input(tmp_path):
     initialize_verified_repo(tmp_path)
     payload = configure_acceptance(tmp_path)
-    payload["checks"][0].update(result_format="junit", report="README.md")
+    payload["checks"][0].update(
+        result_format="junit", report="README.md", expected_tests=["::required"]
+    )
     original = (tmp_path / "README.md").read_text()
     report = anyio.run(
         verify_candidate, parse_profile(payload), tmp_path, tmp_path / ".harness/rounds"
