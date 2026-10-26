@@ -16,6 +16,7 @@ Run: ``python scripts/validate_architecture.py``
 """
 
 import ast
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -31,11 +32,13 @@ BARREL_ENFORCED = {
 # Core cognitive modules that must not import adapters (Rule A).
 CORE_MODULES = {
     "kernel", "modes", "policies", "context", "routing", "execution",
-    "workspace", "agents", "memory", "evaluation", "observability", "intake",
+    "workspace", "agents", "memory", "evaluation", "observability", "intake", "ports",
 }
-FORBIDDEN_ADAPTER_PREFIX = "icm_harness.integrations"
+FORBIDDEN_ADAPTER_PREFIXES = ("icm_harness.integrations", "icm_harness.adapters")
+# The old public API is an explicit composition shim, not the orchestration core.
+COMPOSITION_SHIMS = {"evaluation/compat.py"}
 # Every internal top-level module, for the dependency-graph check (Rule C).
-TOP_MODULES = CORE_MODULES | {"integrations", "cli", "mcp", "web", "application"}
+TOP_MODULES = CORE_MODULES | {"integrations", "adapters", "cli", "mcp", "web", "application"}
 
 
 def _own_top(path: Path) -> str:
@@ -60,6 +63,13 @@ for path in CORE.rglob("*.py"):
     own = _own_top(path)
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for module, lineno in _imports(tree):
+        if (
+            own in {"kernel", "ports"}
+            and module.split(".")[0] not in sys.stdlib_module_names | {"icm_harness"}
+        ):
+            errors.append(
+                f"[vendor-isolation] {path.relative_to(ROOT)}:{lineno} imports {module}"
+            )
         if not module.startswith("icm_harness."):
             continue
         comps = module.split(".")
@@ -69,8 +79,18 @@ for path in CORE.rglob("*.py"):
         rel = path.relative_to(ROOT)
 
         # Rule A: core must not import adapters.
-        if own in CORE_MODULES and module.startswith(FORBIDDEN_ADAPTER_PREFIX):
+        if (
+            own in CORE_MODULES
+            and path.relative_to(CORE).as_posix() not in COMPOSITION_SHIMS
+            and module.startswith(FORBIDDEN_ADAPTER_PREFIXES)
+        ):
             errors.append(f"[adapter-isolation] {rel}:{lineno} imports adapter {module}")
+
+        if own in CORE_MODULES | {"application", "adapters"} and target in {"cli", "mcp", "web"}:
+            errors.append(f"[interface-isolation] {rel}:{lineno} imports client {module}")
+
+        if own in {"kernel", "ports"} and target not in {"kernel", "ports"}:
+            errors.append(f"[domain-isolation] {rel}:{lineno} imports feature {module}")
 
         # Rule B: features are reachable only through their barrel.
         if target in BARREL_ENFORCED and target != own and len(comps) > 2:

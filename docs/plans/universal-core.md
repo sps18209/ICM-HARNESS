@@ -1,8 +1,11 @@
 # ICM universal core: implementation plan
 
-Status: implementation underway. The required-test identity and local evaluator
-integrity phase is implemented; provider extraction, isolation, cross-language
-adapters, API providers and comparative trials below remain proposed.
+Status: implementation underway. Required-test integrity, provider-neutral
+verification, local execution/candidate/verifier adapters, binary evidence and
+source-binding checks are implemented. A compiled TypeScript HTTP fixture also
+runs through the same policy. Container isolation, browser journeys,
+build/deployment-bound promotion, API agents and comparative live trials remain
+proposed. The application still uses local Git workspaces for round delivery.
 Baseline: sps18209/ICM-HARNESS, main 723de3e283157d3beb4adc54613715862df3d3b5.
 Basis: ICM-RRA-UNIVERSAL-CORE-001 and the demonstrated required-test skip bypass.
 

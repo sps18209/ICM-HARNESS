@@ -1,0 +1,8 @@
+{
+  "name": "icm-typescript-api-fixture", "version": "0.0.0", "private": true,
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test --test-reporter=junit --test-reporter-destination=.harness/runtime/api.xml .harness/runtime/build/api.test.js"
+  },
+  "devDependencies": {"@types/node": "20.19.43", "typescript": "5.9.3"}
+}

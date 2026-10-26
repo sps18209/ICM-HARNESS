@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "requirements": [
+    {"id": "API-001", "description": "Authorized writes persist; unauthorized and invalid writes fail.", "checks": ["api-tests"]}
+  ],
+  "setup": [{"id": "compile", "argv": ["npm", "run", "build"]}],
+  "checks": [{
+    "id": "api-tests", "argv": ["npm", "test"], "result_format": "junit",
+    "report": ".harness/runtime/api.xml",
+    "expected_tests": ["test::reject unauthorized write", "test::create and read item", "test::reject invalid input"]
+  }],
+  "protected_paths": ["src/api.test.ts", "tsconfig.json", "package.json", "package-lock.json"],
+  "required_capabilities": ["process", "filesystem"]
+}

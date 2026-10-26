@@ -157,9 +157,11 @@ def test_absent_protected_configuration_cannot_be_added_by_writer(tmp_path):
     path.write_text(json.dumps(payload))
     git(tmp_path, "add", ".harness/project.json")
     git(tmp_path, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-m", "guard")
-    rec = app.create_round(TaskProfile(
-        "build", intent=TaskIntent.BUILD, specification_clarity=0.9, epistemic_uncertainty=0.1
-    ))
+    rec = app.create_round(
+        TaskProfile(
+            "build", intent=TaskIntent.BUILD, specification_clarity=0.9, epistemic_uncertainty=0.1
+        )
+    )
     result = anyio.run(app.run_round, rec.round_id)
     assert result.status == "failed"
     assert "protected acceptance inputs changed" in result.last_error
@@ -185,6 +187,61 @@ def test_post_verification_edits_block_approval_and_promotion(tmp_path, after_ap
     assert not (tmp_path / "product.txt").exists()
 
 
+@pytest.mark.parametrize("tamper", ["snapshot", "native_report"])
+def test_tampered_sealed_verification_blocks_promotion(tmp_path, tamper):
+    app, rec, _ = project(tmp_path)
+    if tamper == "native_report":
+        path = tmp_path / ".harness/project.json"
+        payload = json.loads(path.read_text())
+        check = payload["checks"][0]
+        check["argv"][-1] += (
+            "; p=Path('.harness/runtime/check.xml'); p.parent.mkdir(parents=True,exist_ok=True); "
+            'p.write_text(\'<testsuite><testcase classname="fixture" '
+            'name="required"/></testsuite>\')'
+        )
+        check.update(
+            result_format="junit",
+            report=".harness/runtime/check.xml",
+            expected_tests=["fixture::required"],
+        )
+        path.write_text(json.dumps(payload))
+        git(tmp_path, "add", ".harness/project.json")
+        git(
+            tmp_path,
+            "-c",
+            "user.name=T",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-m",
+            "report",
+        )
+        rec = app.create_round(
+            TaskProfile(
+                "build",
+                intent=TaskIntent.BUILD,
+                specification_clarity=0.9,
+                epistemic_uncertainty=0.1,
+            )
+        )
+    assert anyio.run(app.run_round, rec.round_id).status == "closed"
+    report = next(
+        e.payload for e in reversed(app.events(rec.round_id)) if e.kind == "candidate_verified"
+    )
+    reference = report["receipt"] if tamper == "snapshot" else report["commands"][0]["report_blob"]
+    digest = reference["sha256"]
+    blob = (
+        app.artifacts.round_root
+        / rec.round_id
+        / "verification/store/blobs"
+        / digest[:2]
+        / digest[2:]
+    )
+    blob.write_bytes(b"tampered receipt")
+    with pytest.raises(ValueError, match="integrity"):
+        app.approve_promotion(rec.round_id)
+
+
 def test_destination_movement_requires_new_verification(tmp_path):
     app, rec, _ = project(tmp_path)
     anyio.run(app.run_round, rec.round_id)
@@ -206,12 +263,20 @@ def test_quick_mode_also_requires_executable_checks(tmp_path):
 @pytest.mark.parametrize(
     "xml,allow_skips,expected",
     [
-        ('<testsuite/>', False, False),
+        ("<testsuite/>", False, False),
         ('<testsuite><testcase name="optional"><skipped/></testcase></testsuite>', True, False),
-        ('<testsuite><testcase name="required"/>'
-         '<testcase name="optional"><skipped/></testcase></testsuite>', False, False),
-        ('<testsuite><testcase name="required"/>'
-         '<testcase name="optional"><skipped/></testcase></testsuite>', True, True),
+        (
+            '<testsuite><testcase name="required"/>'
+            '<testcase name="optional"><skipped/></testcase></testsuite>',
+            False,
+            False,
+        ),
+        (
+            '<testsuite><testcase name="required"/>'
+            '<testcase name="optional"><skipped/></testcase></testsuite>',
+            True,
+            True,
+        ),
         ('<testsuite><testcase name="optional"><failure/></testcase></testsuite>', False, False),
         ('<testsuite errors="1"><testcase name="required"/></testsuite>', False, False),
         ('<testsuite><testcase name="required"/></testsuite>', False, True),
@@ -324,6 +389,27 @@ def test_environment_failure_is_blocked_and_does_not_repeat_writer(tmp_path):
     result = anyio.run(app.run_round, rec.round_id)
     assert result.status == "blocked"
     assert len([i for i in agent.calls if i.stage.ref == "build.writer"]) == 1
+
+
+def test_unsupported_environment_capability_blocks_without_repeating_writer(tmp_path):
+    app, _, agent = project(tmp_path)
+    path = tmp_path / ".harness/project.json"
+    payload = json.loads(path.read_text())
+    payload["required_capabilities"] = ["mobile-device"]
+    path.write_text(json.dumps(payload))
+    git(tmp_path, "add", ".harness/project.json")
+    git(tmp_path, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-m", "device")
+    rec = app.create_round(
+        TaskProfile(
+            "build", intent=TaskIntent.BUILD, specification_clarity=0.9, epistemic_uncertainty=0.1
+        )
+    )
+    result = anyio.run(app.run_round, rec.round_id)
+    assert result.status == "blocked"
+    assert len([i for i in agent.calls if i.stage.ref == "build.writer"]) == 1
+    reports = [e.payload for e in app.events(rec.round_id) if e.kind == "candidate_verified"]
+    assert reports[-1]["failure_class"] == "unsupported_capability"
+    assert not reports[-1]["commands"]
 
 
 def test_ignored_tracked_files_are_still_fingerprinted(tmp_path):

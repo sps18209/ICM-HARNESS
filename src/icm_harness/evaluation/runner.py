@@ -1,184 +1,109 @@
-"""Harness-owned command execution and acceptance, independent of agent claims."""
+"""Provider-neutral verification orchestration; no subprocess or vendor imports."""
 
 from __future__ import annotations
 
 import json
+import math
 import os
-import signal
-import subprocess
-import time
 import uuid
-import xml.etree.ElementTree as ET
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
 import anyio
 
-from icm_harness.evaluation.profile import Check, ProjectProfile
-from icm_harness.evaluation.test_evidence import compare_collection, validate_outcomes
-from icm_harness.workspace import candidate_identity, git_revision, protected_identity
+from icm_harness.evaluation.acceptance import decide_acceptance
+from icm_harness.kernel.providers import CommandObservation, CommandSpec, EnvironmentSpec
+from icm_harness.kernel.verification import Check, ProjectProfile
+from icm_harness.ports import VerificationProviders
 
 
-def _inside(root: Path, relative: str) -> Path:
-    path = (root / relative).resolve()
-    if not path.is_relative_to(root.resolve()):
-        raise ValueError(f"verification path escapes worktree: {relative}")
-    return path
-
-
-def _junit(path: Path, check: Check) -> dict:
-    if not path.is_file() or path.stat().st_size > 10 * 1024 * 1024:
-        raise ValueError("missing or oversized JUnit result")
-    source = path.read_bytes().decode("utf-8-sig")
-    if "<!DOCTYPE" in source or "<!ENTITY" in source:
-        raise ValueError("JUnit DTDs and entities are not supported")
-    root = ET.fromstring(source)
-    if root.tag not in {"testsuite", "testsuites"}:
-        raise ValueError("expected JUnit testsuite/testsuites")
-    cases = list(root.iter("testcase"))
-    failures = sum(case.find("failure") is not None for case in cases)
-    errors = sum(case.find("error") is not None for case in cases)
-    skipped = sum(case.find("skipped") is not None for case in cases)
-    identities = []
-    skipped_ids = []
-    for case in cases:
-        if not case.get("name"):
-            raise ValueError("JUnit testcase requires a stable name")
-        identity = case.get("classname", "") + "::" + case.get("name")
-        identities.append(identity)
-        if case.find("skipped") is not None:
-            skipped_ids.append(identity)
-    identity_errors = compare_collection(check.expected_tests, identities)
-    identity_errors += [
-        f"unexpected skip: {item}" for item in skipped_ids if item not in check.optional_skips
-    ]
-    # Suite-level errors must not disappear merely because testcase nodes are absent.
-    declared_errors = sum(int(suite.get("errors", "0")) for suite in root.iter("testsuite"))
-    declared_failures = sum(int(s.get("failures", "0")) for s in root.iter("testsuite"))
-    passed = bool(cases) and not (failures or errors or declared_errors or declared_failures)
-    passed = passed and not identity_errors and skipped < len(cases)
-    return {
-        "passed": passed,
-        "total": len(cases),
-        "failures": failures,
-        "errors": errors,
-        "skipped": skipped,
-        "identity_errors": identity_errors,
-        "optional_skips": [
-            {"id": item, "reason": check.optional_skips[item]}
-            for item in skipped_ids if item in check.optional_skips
-        ],
-    }
-
-
-async def _command(check: Check, root: Path, evidence: Path, env: dict) -> dict:
-    started = time.monotonic()
-    stdout = evidence / f"{check.id}.stdout.log"
-    stderr = evidence / f"{check.id}.stderr.log"
+async def _command(check: Check, handle, providers: VerificationProviders) -> dict:
+    try:
+        observed = await providers.execution.execute(
+            handle,
+            CommandSpec(
+                check.id,
+                check.argv,
+                check.cwd,
+                check.timeout_seconds,
+                check.report if check.result_format != "exit_code" else "",
+            ),
+        )
+    except (OSError, ValueError, TimeoutError) as exc:
+        observed = CommandObservation(
+            None, 0, "", "", error=f"{type(exc).__name__}: {exc}", infrastructure_error=True
+        )
     result = {
         "id": check.id,
         "argv": list(check.argv),
         "cwd": check.cwd,
-        "passed": False,
-        "exit_code": None,
         "result_format": check.result_format,
-        "stdout": str(stdout),
-        "stderr": str(stderr),
+        **asdict(observed),
+        "passed": observed.exit_code == 0 and not observed.error,
     }
-    report = _inside(root, check.report) if check.result_format != "exit_code" else None
-    try:
-        # Never accept a stale report from a prior run.
-        if report is not None:
-            tracked = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(root),
-                    "ls-files",
-                    "--error-unmatch",
-                    "--",
-                    report.relative_to(root.resolve()).as_posix(),
-                ],
-                capture_output=True,
-            )
-            if tracked.returncode == 0:
-                raise ValueError("report output must not overwrite a tracked product input")
-        if report is not None and report.exists():
-            report.unlink()
-        with stdout.open("wb") as out, stderr.open("wb") as err:
-            process = await anyio.open_process(
-                list(check.argv),
-                cwd=_inside(root, check.cwd),
-                env=env,
-                stdout=out,
-                stderr=err,
-                start_new_session=True,
-            )
-            try:
-                with anyio.fail_after(check.timeout_seconds):
-                    while process.returncode is None:
-                        with anyio.move_on_after(0.1):
-                            await process.wait()
-                        if stdout.stat().st_size + stderr.stat().st_size > 16 * 1024 * 1024:
-                            raise ValueError("command exceeded the 16 MiB log budget")
-                    result["exit_code"] = process.returncode
-            finally:
-                # Stop descendants too, including background processes on a successful
-                # command. Services must be supervised by the profile's own lifecycle.
-                with anyio.CancelScope(shield=True):
-                    try:
-                        os.killpg(process.pid, signal.SIGTERM)
-                        await anyio.sleep(0.05)
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    await process.aclose()
-        result["passed"] = result["exit_code"] == 0
-        if report is not None:
-            if check.result_format == "junit":
-                result["tests"] = _junit(report, check)
-            else:
-                if not report.is_file() or report.stat().st_size > 10 * 1024 * 1024:
-                    raise ValueError("missing or oversized pytest event report")
-                result["tests"] = validate_outcomes(
-                    check.expected_tests, check.optional_skips,
-                    json.loads(report.read_text(encoding="utf-8")),
-                )
+    if check.result_format != "exit_code" and not observed.error:
+        try:
+            source = await providers.execution.collect(handle, check.report, 10 * 1024 * 1024)
+            if providers.evidence is not None:
+                try:
+                    reference = providers.evidence.put_blob(
+                        source,
+                        "application/xml" if check.result_format == "junit" else "application/json",
+                    )
+                except (OSError, ValueError) as exc:
+                    result.update(
+                        passed=False,
+                        infrastructure_error=True,
+                        error=f"evidence storage failed: {exc}",
+                    )
+                    return result
+                result["report_blob"] = asdict(reference)
+            result["tests"] = providers.verifiers[check.result_format].evaluate(check, source)
+            if (
+                not isinstance(result["tests"], dict)
+                or type(result["tests"].get("passed")) is not bool
+            ):
+                raise ValueError("verifier must return an explicit boolean passed result")
             result["passed"] = result["passed"] and result["tests"]["passed"]
-    except (OSError, ValueError, TimeoutError, ET.ParseError) as exc:
-        result["passed"] = False
-        result["infrastructure_error"] = isinstance(exc, (OSError, TimeoutError))
-        result["error"] = f"{type(exc).__name__}: {exc}"
-    result["duration_seconds"] = round(time.monotonic() - started, 4)
-    result["output_tail"] = {}
-    for name, path in (("stdout", stdout), ("stderr", stderr)):
-        if path.exists():
-            with path.open("rb") as handle:
-                handle.seek(max(0, path.stat().st_size - 8000))
-                result["output_tail"][name] = handle.read().decode("utf-8", errors="replace")
+        except (OSError, ValueError) as exc:
+            result.update(
+                passed=False,
+                error=f"{type(exc).__name__}: {exc}",
+                infrastructure_error=isinstance(exc, OSError),
+            )
     return result
 
 
-async def verify_candidate(
+async def verify_with_providers(
     profile: ProjectProfile,
-    root: Path,
+    root: str | Path,
     evidence_root: Path,
     cancel_requested=lambda: False,
     total_timeout_seconds: float = 1800,
+    *,
+    providers: VerificationProviders,
 ) -> dict:
+    if (
+        isinstance(total_timeout_seconds, bool)
+        or not isinstance(total_timeout_seconds, (int, float))
+        or not math.isfinite(total_timeout_seconds)
+        or total_timeout_seconds <= 0
+    ):
+        raise ValueError("verification requires a positive finite total time budget")
     run_id = "verify-" + uuid.uuid4().hex
     evidence = evidence_root / run_id
     evidence.mkdir(parents=True, exist_ok=False)
-    before = candidate_identity(root, profile.generated_paths)
-    protected_before = protected_identity(root, profile.protected_paths)
+    candidate = providers.candidate.capture(str(root), profile.generated_paths)
+    before = candidate.source_digest
+    protected_before = providers.candidate.protected_identity(str(root), profile.protected_paths)
     report = {
         "schema_version": 1,
         "run_id": run_id,
         "passed": False,
         "candidate": before,
         "protected_inputs": protected_before,
-        "revision": git_revision(root),
+        "revision": candidate.revision,
         "profile_digest": profile.digest,
         "created_at": datetime.now(UTC).isoformat(),
         "commands": [],
@@ -186,27 +111,40 @@ async def verify_candidate(
         "failure_class": None,
     }
     env = {name: os.environ[name] for name in profile.inherit_environment if name in os.environ}
-    # A dedicated writable area lets tests run while product mutations are detected.
-    env["ICM_VERIFICATION_DIR"] = str(evidence)
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    handle = None
+    environment = providers.execution.capabilities()
+    report["environment"] = asdict(environment)
+    missing = set(profile.required_capabilities) - set(environment.capabilities)
+    unsupported = {
+        check.result_format
+        for group in ("checks", "setup", "reset", "ready", "teardown")
+        for check in getattr(profile, group)
+        if check.result_format != "exit_code" and check.result_format not in providers.verifiers
+    }
+    if missing or unsupported:
+        report["failure_class"] = "unsupported_capability"
+        report["error"] = (
+            f"unsupported capabilities: {sorted(missing)}; verifiers: {sorted(unsupported)}"
+        )
 
     async def execute():
         try:
             for phase in ("setup", "reset", "ready", "checks"):
                 for check in getattr(profile, phase):
-                    entry = await _command(check, root, evidence, env)
+                    entry = await _command(check, handle, providers)
                     report["commands"].append({**entry, "phase": phase})
                     if not entry["passed"]:
-                        report["failure_class"] = (
-                            "implementation"
-                            if phase == "checks" and not entry.get("infrastructure_error")
-                            else "environment"
-                        )
+                        if report["failure_class"] != "cancelled":
+                            report["failure_class"] = (
+                                "implementation"
+                                if phase == "checks" and not entry.get("infrastructure_error")
+                                else "environment"
+                            )
                         return
         finally:
             with anyio.CancelScope(shield=True), anyio.move_on_after(30) as cleanup:
                 for check in profile.teardown:
-                    entry = await _command(check, root, evidence, env)
+                    entry = await _command(check, handle, providers)
                     report["commands"].append({**entry, "phase": "teardown"})
                     if not entry["passed"]:
                         report["failure_class"] = "environment"
@@ -218,39 +156,65 @@ async def verify_candidate(
         while True:
             if cancel_requested():
                 report["failure_class"] = "cancelled"
+                try:
+                    with anyio.CancelScope(shield=True), anyio.move_on_after(5):
+                        await providers.execution.cancel(handle)
+                except (OSError, ValueError) as exc:
+                    report["failure_class"] = "environment"
+                    report["error"] = f"provider cancellation failed: {exc}"
                 scope.cancel()
                 return
             await anyio.sleep(0.1)
 
     try:
-        with anyio.fail_after(total_timeout_seconds):
-            async with anyio.create_task_group() as group:
-                group.start_soon(watch, group.cancel_scope)
-                await execute()
-                group.cancel_scope.cancel()
+        if report["failure_class"] is None:
+            with anyio.fail_after(total_timeout_seconds):
+                handle = await providers.execution.prepare(
+                    EnvironmentSpec(str(root), str(evidence), env, profile.required_capabilities)
+                )
+                report["environment"] = asdict(handle.environment)
+                async with anyio.create_task_group() as group:
+                    group.start_soon(watch, group.cancel_scope)
+                    await execute()
+                    group.cancel_scope.cancel()
     except TimeoutError:
         report["failure_class"] = "environment"
         report["error"] = "verification exceeded its total time budget"
-    after = candidate_identity(root, profile.generated_paths)
+    except (OSError, ValueError) as exc:
+        report["failure_class"] = "environment"
+        report["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        if handle is not None:
+            try:
+                with anyio.CancelScope(shield=True), anyio.move_on_after(10) as cleanup:
+                    try:
+                        await providers.execution.cancel(handle)
+                    finally:
+                        await providers.execution.close(handle)
+            except (OSError, ValueError) as exc:
+                report["failure_class"] = "environment"
+                report["error"] = f"provider cleanup failed: {exc}"
+            if cleanup.cancel_called:
+                report["failure_class"] = "environment"
+                report["error"] = "provider cleanup exceeded its time budget"
+    after = providers.candidate.fingerprint(candidate)
     if after != before:
         report["failure_class"] = "candidate_changed"
-    if protected_identity(root, profile.protected_paths) != protected_before:
+    protected_after = providers.candidate.protected_identity(str(root), profile.protected_paths)
+    if protected_after != protected_before:
         report["failure_class"] = "evaluator_changed"
-    outcomes = {
-        item["id"]: item["passed"] for item in report["commands"] if item["phase"] == "checks"
-    }
-    report["requirements"] = [
-        {
-            **asdict(req),
-            "status": "verified"
-            if all(outcomes.get(c) for c in req.checks)
-            else "failed"
-            if any(c in outcomes and not outcomes[c] for c in req.checks)
-            else "untested",
-        }
-        for req in profile.requirements
-    ]
-    report["passed"] = report["failure_class"] is None and all(
-        item["status"] == "verified" for item in report["requirements"]
-    )
+    decision = decide_acceptance(profile, report["commands"], report["failure_class"])
+    report["requirements"] = list(decision.requirements)
+    report["acceptance"] = {"status": decision.status, "reasons": list(decision.reasons)}
+    report["passed"] = decision.accepted
+    if providers.evidence is not None:
+        try:
+            snapshot = json.dumps(report, sort_keys=True, allow_nan=False).encode()
+            report["receipt"] = asdict(providers.evidence.seal_run(run_id, snapshot))
+        except (OSError, ValueError) as exc:
+            report.update(
+                passed=False, failure_class="environment", error=f"evidence sealing failed: {exc}"
+            )
+            decision = decide_acceptance(profile, report["commands"], "environment")
+            report["acceptance"] = {"status": decision.status, "reasons": list(decision.reasons)}
     return report
