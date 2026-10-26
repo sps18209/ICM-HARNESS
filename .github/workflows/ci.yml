@@ -12,14 +12,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install -e ".[dev]"
-      - run: python scripts/validate_layout.py
-      - run: python scripts/validate_architecture.py
-      - run: ruff check src tests scripts
+      - run: python -m pip install -c requirements/dev.lock -e ".[dev]"
       # Full suite, including the integration suites (integrations adapters,
       # the fake-codex agent path). The live-codex worktree smoke auto-skips
       # unless ICM_SMOKE_CODEX=1 and `codex` is installed.
-      - run: python -m pytest
+      - run: python scripts/verify_project.py
       - run: python -m compileall -q src tests
 
   extension:
@@ -31,7 +28,7 @@ jobs:
           python-version: "3.12"
       # The extension integration test spawns a real `icm serve`, so the
       # harness must be importable by the interpreter it launches.
-      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install -c requirements/dev.lock -e ".[dev]"
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

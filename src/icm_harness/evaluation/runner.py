@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -15,7 +16,8 @@ from pathlib import Path
 import anyio
 
 from icm_harness.evaluation.profile import Check, ProjectProfile
-from icm_harness.workspace import candidate_identity, git_revision
+from icm_harness.evaluation.test_evidence import compare_collection, validate_outcomes
+from icm_harness.workspace import candidate_identity, git_revision, protected_identity
 
 
 def _inside(root: Path, relative: str) -> Path:
@@ -25,27 +27,48 @@ def _inside(root: Path, relative: str) -> Path:
     return path
 
 
-def _junit(path: Path, allow_skips: bool) -> dict:
+def _junit(path: Path, check: Check) -> dict:
     if not path.is_file() or path.stat().st_size > 10 * 1024 * 1024:
         raise ValueError("missing or oversized JUnit result")
-    root = ET.parse(path).getroot()
+    source = path.read_bytes().decode("utf-8-sig")
+    if "<!DOCTYPE" in source or "<!ENTITY" in source:
+        raise ValueError("JUnit DTDs and entities are not supported")
+    root = ET.fromstring(source)
     if root.tag not in {"testsuite", "testsuites"}:
         raise ValueError("expected JUnit testsuite/testsuites")
     cases = list(root.iter("testcase"))
     failures = sum(case.find("failure") is not None for case in cases)
     errors = sum(case.find("error") is not None for case in cases)
     skipped = sum(case.find("skipped") is not None for case in cases)
+    identities = []
+    skipped_ids = []
+    for case in cases:
+        if not case.get("name"):
+            raise ValueError("JUnit testcase requires a stable name")
+        identity = case.get("classname", "") + "::" + case.get("name")
+        identities.append(identity)
+        if case.find("skipped") is not None:
+            skipped_ids.append(identity)
+    identity_errors = compare_collection(check.expected_tests, identities)
+    identity_errors += [
+        f"unexpected skip: {item}" for item in skipped_ids if item not in check.optional_skips
+    ]
     # Suite-level errors must not disappear merely because testcase nodes are absent.
     declared_errors = sum(int(suite.get("errors", "0")) for suite in root.iter("testsuite"))
     declared_failures = sum(int(s.get("failures", "0")) for s in root.iter("testsuite"))
     passed = bool(cases) and not (failures or errors or declared_errors or declared_failures)
-    passed = passed and (allow_skips or not skipped) and skipped < len(cases)
+    passed = passed and not identity_errors and skipped < len(cases)
     return {
         "passed": passed,
         "total": len(cases),
         "failures": failures,
         "errors": errors,
         "skipped": skipped,
+        "identity_errors": identity_errors,
+        "optional_skips": [
+            {"id": item, "reason": check.optional_skips[item]}
+            for item in skipped_ids if item in check.optional_skips
+        ],
     }
 
 
@@ -63,7 +86,7 @@ async def _command(check: Check, root: Path, evidence: Path, env: dict) -> dict:
         "stdout": str(stdout),
         "stderr": str(stderr),
     }
-    report = _inside(root, check.report) if check.result_format == "junit" else None
+    report = _inside(root, check.report) if check.result_format != "exit_code" else None
     try:
         # Never accept a stale report from a prior run.
         if report is not None:
@@ -80,7 +103,7 @@ async def _command(check: Check, root: Path, evidence: Path, env: dict) -> dict:
                 capture_output=True,
             )
             if tracked.returncode == 0:
-                raise ValueError("JUnit output must not overwrite a tracked product input")
+                raise ValueError("report output must not overwrite a tracked product input")
         if report is not None and report.exists():
             report.unlink()
         with stdout.open("wb") as out, stderr.open("wb") as err:
@@ -113,7 +136,15 @@ async def _command(check: Check, root: Path, evidence: Path, env: dict) -> dict:
                     await process.aclose()
         result["passed"] = result["exit_code"] == 0
         if report is not None:
-            result["tests"] = _junit(report, check.allow_skips)
+            if check.result_format == "junit":
+                result["tests"] = _junit(report, check)
+            else:
+                if not report.is_file() or report.stat().st_size > 10 * 1024 * 1024:
+                    raise ValueError("missing or oversized pytest event report")
+                result["tests"] = validate_outcomes(
+                    check.expected_tests, check.optional_skips,
+                    json.loads(report.read_text(encoding="utf-8")),
+                )
             result["passed"] = result["passed"] and result["tests"]["passed"]
     except (OSError, ValueError, TimeoutError, ET.ParseError) as exc:
         result["passed"] = False
@@ -140,11 +171,13 @@ async def verify_candidate(
     evidence = evidence_root / run_id
     evidence.mkdir(parents=True, exist_ok=False)
     before = candidate_identity(root, profile.generated_paths)
+    protected_before = protected_identity(root, profile.protected_paths)
     report = {
         "schema_version": 1,
         "run_id": run_id,
         "passed": False,
         "candidate": before,
+        "protected_inputs": protected_before,
         "revision": git_revision(root),
         "profile_digest": profile.digest,
         "created_at": datetime.now(UTC).isoformat(),
@@ -155,6 +188,7 @@ async def verify_candidate(
     env = {name: os.environ[name] for name in profile.inherit_environment if name in os.environ}
     # A dedicated writable area lets tests run while product mutations are detected.
     env["ICM_VERIFICATION_DIR"] = str(evidence)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
 
     async def execute():
         try:
@@ -200,6 +234,8 @@ async def verify_candidate(
     after = candidate_identity(root, profile.generated_paths)
     if after != before:
         report["failure_class"] = "candidate_changed"
+    if protected_identity(root, profile.protected_paths) != protected_before:
+        report["failure_class"] = "evaluator_changed"
     outcomes = {
         item["id"]: item["passed"] for item in report["commands"] if item["phase"] == "checks"
     }

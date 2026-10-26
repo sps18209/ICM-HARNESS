@@ -80,7 +80,7 @@ def protected_identity(root: Path, paths: tuple[str, ...]) -> str:
             name = path.relative_to(root).as_posix()
             digest.update(name.encode() + b"\0")
             if path.is_symlink():
-                digest.update(b"link\0" + os.fsencode(os.readlink(path)))
+                raise ValueError(f"protected inputs must not use symlinks: {name}")
             elif path.is_file():
                 if not path.resolve().is_relative_to(root.resolve()):
                     raise ValueError(f"protected path escapes project: {relative}")

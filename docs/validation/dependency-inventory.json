@@ -1,0 +1,152 @@
+{
+  "scope": "Installed runtime/dev dependency metadata; not optional SDKs or build tooling",
+  "packages": [
+    {
+      "name": "anyio",
+      "version": "4.15.1",
+      "license_expression": "MIT",
+      "license_metadata": null,
+      "license_files": [
+        "LICENSE"
+      ],
+      "project_urls": [
+        "Documentation, https://anyio.readthedocs.io/en/latest/",
+        "Changelog, https://anyio.readthedocs.io/en/stable/versionhistory.html",
+        "Source code, https://github.com/agronholm/anyio",
+        "Issue tracker, https://github.com/agronholm/anyio/issues"
+      ],
+      "metadata_sha256": "043aecb571af7189e8a6c528f5d8e32545f1b2cdfaaf761d51e6d5b67ea3ca81"
+    },
+    {
+      "name": "idna",
+      "version": "3.20",
+      "license_expression": "BSD-3-Clause",
+      "license_metadata": null,
+      "license_files": [
+        "LICENSE.md"
+      ],
+      "project_urls": [
+        "Changelog, https://github.com/kjd/idna/blob/master/HISTORY.md",
+        "Issue tracker, https://github.com/kjd/idna/issues",
+        "Source, https://github.com/kjd/idna"
+      ],
+      "metadata_sha256": "dbd8c14c1e4ca1e0c9824a6dbc7cbbf78884f38eb52d91148cd3025f671e4b85"
+    },
+    {
+      "name": "iniconfig",
+      "version": "2.3.1",
+      "license_expression": "MIT",
+      "license_metadata": null,
+      "license_files": [
+        "LICENSE"
+      ],
+      "project_urls": [
+        "Homepage, https://github.com/pytest-dev/iniconfig"
+      ],
+      "metadata_sha256": "47c2c35d936f5c649d8074c6464719a42966a67b5cebad01e3e5784cf090cfb6"
+    },
+    {
+      "name": "packaging",
+      "version": "26.3",
+      "license_expression": "Apache-2.0 OR BSD-2-Clause",
+      "license_metadata": null,
+      "license_files": [
+        "LICENSE",
+        "LICENSE.APACHE",
+        "LICENSE.BSD"
+      ],
+      "project_urls": [
+        "Documentation, https://packaging.pypa.io/",
+        "Source, https://github.com/pypa/packaging"
+      ],
+      "metadata_sha256": "70fdb89fc4d4a9a043bf7372b8972bcc883fddff34ab55e9cf80d73875384763"
+    },
+    {
+      "name": "pluggy",
+      "version": "1.7.0",
+      "license_expression": null,
+      "license_metadata": "MIT",
+      "license_files": [
+        "LICENSE"
+      ],
+      "project_urls": [
+        "Homepage, https://github.com/pytest-dev/pluggy",
+        "Documentation, https://pluggy.readthedocs.io/",
+        "Changelog, https://pluggy.readthedocs.io/en/latest/changelog.html",
+        "Repository, https://github.com/pytest-dev/pluggy",
+        "Issues, https://github.com/pytest-dev/pluggy/issues",
+        "Funding, https://tidelift.com/subscription/pkg/pypi-pluggy"
+      ],
+      "metadata_sha256": "20ac8237e37f1d6e7e75500cd663015177ba80c1a1a595ff6bae18a539ff8a2c"
+    },
+    {
+      "name": "Pygments",
+      "version": "2.21.0",
+      "license_expression": "BSD-2-Clause",
+      "license_metadata": null,
+      "license_files": [
+        "AUTHORS",
+        "LICENSE"
+      ],
+      "project_urls": [
+        "Homepage, https://pygments.org",
+        "Documentation, https://pygments.org/docs",
+        "Source, https://github.com/pygments/pygments",
+        "Bug Tracker, https://github.com/pygments/pygments/issues",
+        "Changelog, https://github.com/pygments/pygments/blob/master/CHANGES"
+      ],
+      "metadata_sha256": "1dde075570136774c706bf0009183a793fe0ee262e4a5590cc6eff8453eedd43"
+    },
+    {
+      "name": "pytest",
+      "version": "9.1.1",
+      "license_expression": "MIT",
+      "license_metadata": null,
+      "license_files": [
+        "LICENSE"
+      ],
+      "project_urls": [
+        "Changelog, https://docs.pytest.org/en/stable/changelog.html",
+        "Contact, https://docs.pytest.org/en/stable/contact.html",
+        "Funding, https://docs.pytest.org/en/stable/sponsor.html",
+        "Homepage, https://docs.pytest.org/en/latest/",
+        "Source, https://github.com/pytest-dev/pytest",
+        "Tracker, https://github.com/pytest-dev/pytest/issues"
+      ],
+      "metadata_sha256": "c5d032518012789cabc870d46589aca3aeda36cf9fa4399ee88bda3d10438451"
+    },
+    {
+      "name": "ruff",
+      "version": "0.17.2",
+      "license_expression": "MIT",
+      "license_metadata": null,
+      "license_files": [
+        "LICENSE"
+      ],
+      "project_urls": [
+        "Changelog, https://github.com/astral-sh/ruff/blob/main/CHANGELOG.md",
+        "Documentation, https://docs.astral.sh/ruff/",
+        "Repository, https://github.com/astral-sh/ruff"
+      ],
+      "metadata_sha256": "61812a386fb940f04eb51af6ebd7f908dda19bdc648bc17302ecb2b45cec0c72"
+    },
+    {
+      "name": "typing_extensions",
+      "version": "4.16.0",
+      "license_expression": "PSF-2.0",
+      "license_metadata": null,
+      "license_files": [
+        "LICENSE"
+      ],
+      "project_urls": [
+        "Bug Tracker, https://github.com/python/typing_extensions/issues",
+        "Changes, https://github.com/python/typing_extensions/blob/main/CHANGELOG.md",
+        "Documentation, https://typing-extensions.readthedocs.io/",
+        "Home, https://github.com/python/typing_extensions",
+        "Q & A, https://github.com/python/typing/discussions",
+        "Repository, https://github.com/python/typing_extensions"
+      ],
+      "metadata_sha256": "b05084ca1d50879865178d9fff9fabeab61bdfb1f361bfbde95421ffc8f9be46"
+    }
+  ]
+}

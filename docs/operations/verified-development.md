@@ -14,7 +14,7 @@ by an agent. Review its requirements and commands as executable project code:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "requirements": [
     {
       "id": "SAVE-001",
@@ -25,16 +25,30 @@ by an agent. Review its requirements and commands as executable project code:
   "checks": [
     {
       "id": "api-acceptance",
-      "argv": ["python", "-m", "pytest", "tests/acceptance", "--junitxml=.harness/runtime/api.xml"],
-      "result_format": "junit",
-      "report": ".harness/runtime/api.xml",
+      "argv": ["python", "-m", "icm_harness.evaluation.pytest_runner", "--report", ".harness/runtime/api.json", "--", "tests/acceptance"],
+      "result_format": "pytest_events",
+      "report": ".harness/runtime/api.json",
+      "test_manifest": ".harness/api-tests.json",
       "timeout_seconds": 300
     }
   ],
-  "protected_paths": ["tests/acceptance"],
+  "protected_paths": ["tests/acceptance", "tests/conftest.py", "conftest.py", "pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"],
   "inherit_environment": ["PATH", "HOME", "LANG", "TMPDIR", "TEST_DATABASE_URL"]
 }
 ```
+
+Before creating a round, collect the manifest from reviewed baseline material:
+
+```sh
+python scripts/capture_test_manifest.py --output .harness/api-tests.json -- tests/acceptance
+```
+
+The capture script creates a new file exclusively; it never refreshes the baseline
+automatically. Review and commit it with the acceptance inputs. Use
+`--optional native-node-id 'Owner-approved reason'` before `--` for each permitted optional
+skip. Alternatively provide `expected_tests` and `optional_skips` inline.
+Manifests are expanded and frozen at round creation, never collected from a
+writer-modified candidate.
 
 The actual assertions, not the requirement's wording, determine what this
 check proves. The owner must ensure meaningful coverage. Code coverage, command
@@ -71,9 +85,28 @@ total time budget, with up to 30 additional seconds for teardown. Log output is
 monitored against a 16 MiB per-command limit. Cancellation kills its process group. Logs,
 durations, exit codes and JUnit counts/skips are retained under the round's
 verification directory. A `verification.json` artifact is produced by the
-harness, not the model. JUnit checks reject missing, malformed, empty or all-skipped
-reports. Mixed skipped tests require explicit `allow_skips: true`; skipped cases
-remain visible and are not represented as passed cases. Exit-code-only checks
+harness, not the model. Structured checks reject missing, malformed, empty or
+all-skipped reports. Every captured test identity must remain present. Blanket
+`allow_skips: true` now rejects the profile, including old captured profiles;
+create a reviewed new round with exact optional IDs and reasons. Pytest evidence
+requires setup/call/teardown outcomes, with a setup-skip exception only for named
+optional tests. Missing, duplicate, deselected, failed, xfail and xpass outcomes
+fail acceptance. Additional passing tests are allowed.
+
+The local pytest adapter disables entrypoint plugin autoload and clears
+`PYTEST_ADDOPTS`/`PYTEST_PLUGINS`. Explicit `-p` plugins, configuration, conftest
+files, fixtures and dependencies still belong to the trusted input set and must
+be reviewed/protected. Bytecode writing is disabled by the command runner. Keep
+protected directory contents stable across worktrees; prefer explicit source
+files and absent configuration paths over directories containing machine-local
+cache files. This mode is **trusted development**, not isolated acceptance:
+code sharing the evaluator process or OS account can forge reports or restore
+changed inputs. Container/control-plane isolation is a separate later phase.
+
+JUnit IDs are `classname::name`; testcase names must be present and unique.
+JUnit checks also require a manifest and exact optional IDs, but cannot prove
+native pytest execution phases. XML reports must be UTF-8 and cannot contain
+DTDs or entity declarations. Use `pytest_events` for pytest. Exit-code-only checks
 record command success without inventing test counts.
 
 Tests may write disposable outputs. Git-ignored output is naturally excluded
@@ -90,7 +123,7 @@ Use the same contract for frontend checks, with argv such as
 `["npm", "run", "test:visual"]` and `["npm", "run", "test:e2e"]`.
 Configure those scripts to write fresh JUnit reports to ignored output paths
 when counts/skips are required, then select `result_format: "junit"` and the
-matching `report` path. Playwright journeys should exercise the connected app;
+matching `report` path and a reviewed manifest of `classname::name` IDs. Playwright journeys should exercise the connected app;
 Storybook tests alone do not establish backend integration. Keep Figma document
 references and approved states in the planner's context. No Figma, browser or
 Storybook dependency is required for projects that do not need them.
