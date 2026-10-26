@@ -38,6 +38,7 @@ class EnvironmentSpec:
     evidence_locator: str
     environment: Mapping[str, str]
     required_capabilities: tuple[str, ...] = ()
+    artifact_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,7 @@ class CommandSpec:
     cwd: str = ""
     timeout_seconds: float = 300
     report: str = ""
+    evidence_paths: tuple[str, ...] = ()
 
     def __post_init__(self):
         if not isinstance(self.id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.id):
@@ -70,7 +72,9 @@ class CommandSpec:
             or not 0 < self.timeout_seconds <= 3600
         ):
             raise ValueError("command timeout must be finite and in (0, 3600]")
-        for name in (self.cwd, self.report):
+        if not isinstance(self.evidence_paths, tuple):
+            raise ValueError("evidence paths must be a tuple")
+        for name in (self.cwd, self.report, *self.evidence_paths):
             if not isinstance(name, str) or "\\" in name or "\x00" in name:
                 raise ValueError("command paths must be POSIX relative paths")
             if PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts:

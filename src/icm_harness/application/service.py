@@ -61,6 +61,7 @@ from icm_harness.routing import (
 )
 from icm_harness.workspace import (
     GitWorktreeManager,
+    artifact_identity,
     candidate_identity,
     file_lock,
     git_revision,
@@ -217,14 +218,23 @@ class HarnessApplication:
         identity = self._accepted_candidate(record)
         profile = self._project_profile(round_id)
         with file_lock(self.root / ".harness/runtime/promotion.lock"):
+            if self._accepted_candidate(record) != identity:
+                raise ValueError("verified candidate changed while waiting for promotion")
             commit = GitWorktreeManager(self.root, self.config.workspace.worktree_root).promote(
                 record.workspace_path,
                 message=f"ICM round {round_id}: {record.objective}",
                 expected_candidate=identity["candidate"],
                 expected_base=identity["base_revision"],
                 generated_paths=profile.generated_paths,
+                artifact_paths=profile.artifact_paths,
+                expected_artifact_digest=identity.get("artifact_digest"),
             )
-        self._event(round_id, "round_promoted", None, {"commit": commit})
+        promoted = {"commit": commit}
+        if profile.artifact_paths:
+            promoted.update(
+                artifact_digest=identity["artifact_digest"], verification_run_id=identity["run_id"]
+            )
+        self._event(round_id, "round_promoted", None, promoted)
         return self.state.get_round(round_id)
 
     def _project_profile(self, round_id: str):
@@ -265,17 +275,29 @@ class HarnessApplication:
             for command in report["commands"]:
                 if command.get("report_blob"):
                     providers.evidence.get_blob(EvidenceRef(**command["report_blob"]))
+                for attachment in command.get("attachments", []):
+                    providers.evidence.get_blob(EvidenceRef(**attachment["blob"]))
+            for artifact in report.get("artifacts", []):
+                providers.evidence.get_blob(EvidenceRef(**artifact["blob"]))
         workspace = Path(record.workspace_path) if record.workspace_path else self.root
         self._require_protected(record.round_id, workspace)
         if candidate_identity(workspace, profile.generated_paths) != report["candidate"]:
             raise ValueError("candidate changed after verification; run a new round")
+        if profile.artifact_paths and (
+            not report.get("artifact_digest")
+            or artifact_identity(workspace, profile.artifact_paths) != report["artifact_digest"]
+        ):
+            raise ValueError("built artifact changed after verification; run a new round")
         if git_revision(self.root) != report["base_revision"]:
             raise ValueError(
                 "destination changed after verification; create a round on the new base"
             )
-        return {
+        identity = {
             key: report[key] for key in ("candidate", "base_revision", "profile_digest", "run_id")
         }
+        if profile.artifact_paths:
+            identity["artifact_digest"] = report["artifact_digest"]
+        return identity
 
     def _handoff(self, record: RoundRecord) -> str:
         sections = [f"Original objective: {record.objective}"]

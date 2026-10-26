@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from icm_harness.kernel.errors import WorkspaceError
-from icm_harness.workspace.identity import candidate_identity, candidate_paths
+from icm_harness.workspace.identity import artifact_identity, candidate_identity, candidate_paths
 
 
 def _slug(value: str) -> str:
@@ -93,8 +93,14 @@ class GitWorktreeManager:
         expected_candidate: str | None = None,
         expected_base: str | None = None,
         generated_paths: tuple[str, ...] = (),
+        artifact_paths: tuple[str, ...] = (),
+        expected_artifact_digest: str | None = None,
     ) -> str:
         worktree = Path(path).resolve()
+        if expected_artifact_digest is not None and (
+            artifact_identity(worktree, artifact_paths) != expected_artifact_digest
+        ):
+            raise WorkspaceError("built artifact changed since verification")
         if expected_base is not None and self._git("rev-parse", "HEAD") != expected_base:
             raise WorkspaceError("destination changed since verification")
         if expected_candidate is not None and (
@@ -134,6 +140,10 @@ class GitWorktreeManager:
         if expected_candidate is not None:
             if candidate_identity(worktree, generated_paths) != expected_candidate:
                 raise WorkspaceError("candidate changed before merge")
+            if expected_artifact_digest is not None and (
+                artifact_identity(worktree, artifact_paths) != expected_artifact_digest
+            ):
+                raise WorkspaceError("built artifact changed before merge")
             if self._git_at(worktree, "rev-parse", "HEAD^{tree}") != self._git_at(
                 worktree, "write-tree"
             ):

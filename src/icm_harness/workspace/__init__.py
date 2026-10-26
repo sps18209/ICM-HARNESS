@@ -16,6 +16,7 @@ _PUBLIC: dict[str, str] = {
     "candidate_identity": "identity",
     "git_revision": "identity",
     "protected_identity": "identity",
+    "artifact_identity": "identity",
 }
 
 __all__ = sorted(_PUBLIC)

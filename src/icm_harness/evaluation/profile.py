@@ -79,6 +79,17 @@ def _check(data: object) -> Check:
         raise ValueError("optional_skips must map expected test IDs to non-empty reasons")
     if fmt == "exit_code" and (expected or optional):
         raise ValueError("test identities require a structured report check")
+    attachments = data.get("attachments", {})
+    if not isinstance(attachments, dict) or len(attachments) > 16:
+        raise ValueError("attachments must map at most 16 paths to media types")
+    for path, media_type in attachments.items():
+        relative_path(path)
+        if (
+            str(PurePosixPath(path)) != path
+            or not isinstance(media_type, str)
+            or not re.fullmatch(r"[A-Za-z0-9.+_-]+/[A-Za-z0-9.+_-]+", media_type)
+        ):
+            raise ValueError("attachments require canonical paths and explicit media types")
     return Check(
         _identifier(data.get("id")),
         tuple(argv),
@@ -89,6 +100,7 @@ def _check(data: object) -> Check:
         False,
         tuple(expected),
         dict(optional),
+        dict(attachments),
     )
 
 
@@ -144,14 +156,69 @@ def parse_profile(data: object) -> ProjectProfile:
         not isinstance(item, str) or not item.strip() for item in capabilities
     ):
         raise ValueError("required_capabilities must contain non-empty strings")
+    artifacts = data.get("artifact_paths", [])
+    if not isinstance(artifacts, (list, tuple)) or len(artifacts) > 64:
+        raise ValueError("artifact_paths must be an array of at most 64 explicit files")
+    artifacts = tuple(relative_path(path) for path in artifacts)
+    generated = tuple(relative_path(path) for path in generated)
+    protected = tuple(relative_path(path) for path in protected)
+    if len(set(artifacts)) != len(artifacts) or any(
+        str(PurePosixPath(path)) != path for path in artifacts
+    ):
+        raise ValueError("artifact_paths must contain unique canonical relative paths")
+    reports = {
+        str(PurePosixPath(check.report))
+        for checks in groups.values()
+        for check in checks
+        if check.report
+    }
+    for path in artifacts:
+        if not any(
+            path.startswith(prefix.rstrip("/") + "/") or path == prefix
+            for prefix in (*[str(PurePosixPath(p)) for p in generated], ".harness/runtime")
+        ):
+            raise ValueError("artifacts must be inside generated_paths or .harness/runtime")
+        if path in reports or any(
+            item == "."
+            or path == item
+            or path.startswith(item + "/")
+            or item.startswith(path + "/")
+            for item in (str(PurePosixPath(p)) for p in protected)
+        ):
+            raise ValueError("artifacts must not overlap protected inputs or check reports")
+    for checks in groups.values():
+        for check in checks:
+            for path in check.attachments:
+                if not any(
+                    path == prefix.rstrip("/") or path.startswith(prefix.rstrip("/") + "/")
+                    for prefix in (*generated, ".harness/runtime")
+                ):
+                    raise ValueError(
+                        "attachments must be inside generated_paths or .harness/runtime"
+                    )
+                if (
+                    path in artifacts
+                    or path in reports
+                    or any(
+                        item == "."
+                        or path == item
+                        or path.startswith(item + "/")
+                        or item.startswith(path + "/")
+                        for item in (str(PurePosixPath(p)) for p in protected)
+                    )
+                ):
+                    raise ValueError(
+                        "attachments must not overwrite artifacts, reports or protected inputs"
+                    )
     return ProjectProfile(
         data["schema_version"],
         tuple(requirements),
         **groups,
-        generated_paths=tuple(relative_path(path) for path in generated),
-        protected_paths=tuple(relative_path(path) for path in protected),
+        generated_paths=generated,
+        protected_paths=protected,
         inherit_environment=tuple(env),
         required_capabilities=tuple(capabilities),
+        artifact_paths=artifacts,
     )
 
 

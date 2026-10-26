@@ -1,8 +1,14 @@
 import { createServer } from "node:http";
+import { html } from "./ui";
 
 export function makeServer() {
   const items = new Map<string, string>();
   return createServer((request, response) => {
+    if (request.method === "GET" && request.url === "/") {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(html); return;
+    }
+    if (request.url === "/favicon.ico") { response.writeHead(204).end(); return; }
     response.setHeader("content-type", "application/json");
     if (request.headers.authorization !== "Bearer fixture-token") {
       response.writeHead(401).end(JSON.stringify({ error: "unauthorized" }));
@@ -22,6 +28,9 @@ export function makeServer() {
         }
       });
       return;
+    }
+    if (request.method === "GET" && request.url === "/items") {
+      response.end(JSON.stringify(Array.from(items.values()))); return;
     }
     if (request.method === "GET" && request.url === "/items/1" && items.has("1")) {
       response.end(JSON.stringify({ id: "1", value: items.get("1") }));

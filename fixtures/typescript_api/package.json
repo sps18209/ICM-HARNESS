@@ -1,8 +1,15 @@
 {
-  "name": "icm-typescript-api-fixture", "version": "0.0.0", "private": true,
+  "name": "icm-typescript-api-fixture",
+  "version": "0.0.0",
+  "private": true,
   "scripts": {
     "build": "tsc",
-    "test": "node --test --test-reporter=junit --test-reporter-destination=.harness/runtime/api.xml .harness/runtime/build/api.test.js"
+    "test": "node --test --test-reporter=junit --test-reporter-destination=.harness/runtime/api.xml .harness/runtime/build/api.test.js",
+    "test:browser": "playwright test"
   },
-  "devDependencies": {"@types/node": "20.19.43", "typescript": "5.9.3"}
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@types/node": "20.19.43",
+    "typescript": "5.9.3"
+  }
 }

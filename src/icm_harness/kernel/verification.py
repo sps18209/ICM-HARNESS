@@ -18,6 +18,7 @@ class Check:
     allow_skips: bool = False
     expected_tests: tuple[str, ...] = ()
     optional_skips: dict[str, str] = field(default_factory=dict)
+    attachments: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class ProjectProfile:
     generated_paths: tuple[str, ...] = ()
     protected_paths: tuple[str, ...] = ()
     required_capabilities: tuple[str, ...] = ()
+    artifact_paths: tuple[str, ...] = ()
     inherit_environment: tuple[str, ...] = ("PATH", "HOME", "LANG", "TMPDIR")
 
     def payload(self) -> dict:
@@ -46,6 +48,12 @@ class ProjectProfile:
         if not self.required_capabilities:
             # Preserve digests for captured profiles created before capability negotiation.
             payload.pop("required_capabilities")
+        if not self.artifact_paths:
+            payload.pop("artifact_paths")
+        for group in ("checks", "setup", "reset", "ready", "teardown"):
+            for check in payload[group]:
+                if not check["attachments"]:
+                    check.pop("attachments")
         return payload
 
     @property

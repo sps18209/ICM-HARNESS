@@ -10,7 +10,9 @@ from pathlib import Path
 
 import anyio
 
+from icm_harness.adapters.storage.filesystem import FilesystemEvidenceStore
 from icm_harness.evaluation import load_profile, verify_candidate
+from icm_harness.kernel.providers import EvidenceRef
 
 
 def main():
@@ -43,6 +45,16 @@ def main():
         if not passed["passed"]:
             print(json.dumps(passed, indent=2))
             raise SystemExit("correct TypeScript fixture failed acceptance")
+        store = FilesystemEvidenceStore(evidence / "store")
+        screenshots = repository / ".harness/runtime/browser-qa"
+        screenshots.mkdir(parents=True, exist_ok=True)
+        for command in passed["commands"]:
+            for attachment in command.get("attachments", []):
+                reference = EvidenceRef(**attachment["blob"])
+                if reference.media_type == "image/png":
+                    (screenshots / Path(attachment["path"]).name).write_bytes(
+                        store.get_blob(reference)
+                    )
         server = root / "src/server.ts"
         original = server.read_text(encoding="utf-8")
         changed = original.replace("response.writeHead(401)", "response.writeHead(200)")
@@ -52,14 +64,39 @@ def main():
         if rejected["passed"] or rejected["failure_class"] != "implementation":
             print(json.dumps(rejected, indent=2))
             raise SystemExit("unauthorized-write regression was not rejected")
+        server.write_text(original, encoding="utf-8")
+        ui = root / "src/ui.ts"
+        original_ui = ui.read_text(encoding="utf-8")
+        broken_ui = original_ui.replace(
+            "status.textContent = 'Saved';", "status.textContent = 'Saving';"
+        )
+        assert broken_ui != original_ui
+        ui.write_text(broken_ui, encoding="utf-8")
+        browser_rejected = anyio.run(verify_candidate, profile, root, evidence)
+        browser_check = next(c for c in browser_rejected["commands"] if c["id"] == "browser-tests")
+        api_check = next(c for c in browser_rejected["commands"] if c["id"] == "api-tests")
+        if browser_rejected["passed"] or browser_check["passed"] or not api_check["passed"]:
+            print(json.dumps(browser_rejected, indent=2))
+            raise SystemExit("browser-only regression was not independently rejected")
         print(
             json.dumps(
                 {
                     "target_language": "TypeScript",
-                    "native_tests": passed["commands"][-1]["tests"]["total"],
+                    "api_tests": next(c for c in passed["commands"] if c["id"] == "api-tests")[
+                        "tests"
+                    ]["total"],
+                    "browser_tests": next(
+                        c for c in passed["commands"] if c["id"] == "browser-tests"
+                    )["tests"]["total"],
                     "correct_candidate": "accepted",
                     "authorization_regression": "rejected",
-                    "evidence_runs": [passed["run_id"], rejected["run_id"]],
+                    "browser_only_regression": "rejected",
+                    "artifact_digest": passed["artifact_digest"],
+                    "evidence_runs": [
+                        passed["run_id"],
+                        rejected["run_id"],
+                        browser_rejected["run_id"],
+                    ],
                 },
                 indent=2,
             )

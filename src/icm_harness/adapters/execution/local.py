@@ -49,7 +49,9 @@ class LocalExecutionProvider:
             platform.system(),
             platform.machine(),
             "trusted-development",
-            ("process", "filesystem", "posix-process-groups") if os.name == "posix" else (),
+            ("process", "filesystem", "posix-process-groups", "fresh-artifacts")
+            if os.name == "posix"
+            else (),
             sha256(json.dumps(facts, sort_keys=True).encode()).hexdigest(),
             facts=facts,
         )
@@ -75,6 +77,12 @@ class LocalExecutionProvider:
             facts=facts,
             toolchain_digest=sha256(json.dumps(facts, sort_keys=True).encode()).hexdigest(),
         )
+        root = Path(spec.workspace_locator).resolve()
+        for name in spec.artifact_paths:
+            relative = Path(name)
+            if any((root / parent).is_symlink() for parent in (relative, *relative.parents)):
+                raise ValueError(f"artifact output must not use symlinks: {name}")
+            self._prepare_report(root, name)
         Path(spec.evidence_locator).mkdir(parents=True, exist_ok=True)
         handle = ExecutionHandle(uuid.uuid4().hex, environment)
         self._sessions[handle.token] = EnvironmentSpec(
@@ -82,6 +90,7 @@ class LocalExecutionProvider:
             str(Path(spec.evidence_locator).resolve()),
             dict(spec.environment),
             tuple(spec.required_capabilities),
+            tuple(spec.artifact_paths),
         )
         return handle
 
@@ -91,6 +100,9 @@ class LocalExecutionProvider:
         return self._sessions[handle.token]
 
     def _prepare_report(self, root: Path, relative: str) -> None:
+        name = Path(relative)
+        if any((root / parent).is_symlink() for parent in (name, *name.parents)):
+            raise ValueError(f"verification outputs must not use symlinks: {relative}")
         path = inside(root, relative)
         tracked = subprocess.run(
             [
@@ -130,6 +142,8 @@ class LocalExecutionProvider:
         try:
             if command.report:
                 self._prepare_report(root, command.report)
+            for name in command.evidence_paths:
+                self._prepare_report(root, name)
             env = dict(spec.environment)
             env["ICM_VERIFICATION_DIR"] = str(evidence)
             env["PYTHONDONTWRITEBYTECODE"] = "1"
